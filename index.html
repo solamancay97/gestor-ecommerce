@@ -2595,43 +2595,33 @@ function Metas({
     cargarMetas();
   };
   const leerBAS = e => {
-    const file = e.target.files[0];
+    const file = e && e.target && e.target.files ? e.target.files[0] : null;
     if (!file) return;
-    setCargandoBAS(true);
-    setArchivoBAS(file.name);
+    setCargandoBAS(true); setArchivoBAS(file.name);
     const reader = new FileReader();
     reader.onload = ev => {
       try {
-        const wb = XLSX.read(ev.target.result, {
-          type: "binary",
-          cellDates: true,
-          dateNF: "yyyy-mm-dd"
-        });
+        const wb = XLSX.read(ev.target.result, {type:"binary",raw:false,dateNF:"yyyy-mm-dd"});
         const ws = wb.Sheets[wb.SheetNames[0]];
-        // Intentar json directo; si da pocos campos usar header:1
-        let rows = XLSX.utils.sheet_to_json(ws, {
-          raw: false,
-          defval: "",
-          dateNF: "yyyy-mm-dd"
-        });
-        if (!rows.length || Object.keys(rows[0]).length < 5) {
-          const data = XLSX.utils.sheet_to_json(ws, {
-            header: 1,
-            raw: false,
-            defval: "",
-            dateNF: "yyyy-mm-dd"
-          });
-          const hdr = data[0].map(String);
-          rows = data.slice(1).map(r => {
-            const o = {};
-            hdr.forEach((h, i) => o[h] = r[i] || "");
-            return o;
-          });
-        }
+        // Leer como arrays (mucho más liviano con 130 columnas x 33k filas)
+        const data = XLSX.utils.sheet_to_json(ws, {header:1,raw:false,defval:"",dateNF:"yyyy-mm-dd"});
+        if(!data.length){setRowsBAS([]);setCargandoBAS(false);return;}
+        const hdrs = data[0].map(String);
+        // Encontrar índice de las 6 columnas necesarias (no cargar las 124 restantes)
+        const fi = pts => hdrs.findIndex(h => pts.some(p => p.test(h)));
+        const iA=fi([/abrevi/i]), iN=fi([/anulad/i]), iO=fi([/observ/i]);
+        const iT=fi([/^total$/i]), iS=fi([/sucursal/i]), iF=fi([/^fecha$/i,/fecha/i]);
+        // Construir objetos solo con esas 6 propiedades
+        const rows = data.slice(1).filter(r=>r[iA]).map(r=>({
+          Abreviado:   String(r[iA]||"").trim(),
+          Anulado:     String(r[iN]||"0").trim(),
+          Observacion: String(r[iO]||""),
+          Total:       String(r[iT]||"0"),
+          Sucursal:    String(r[iS]||""),
+          Fecha:       String(r[iF]||"")
+        }));
         setRowsBAS(rows);
-      } catch (err) {
-        alert("Error BAS: " + err.message);
-      }
+      } catch(err){alert("Error BAS: "+err.message);}
       setCargandoBAS(false);
     };
     reader.readAsBinaryString(file);
@@ -2709,35 +2699,16 @@ function Metas({
   // ── Lógica core separada para poder combinarla ──
   const _coreBAS = async () => {
     if(!rowsBAS.length)return;
-    const cols = Object.keys(rowsBAS[0]);
-    // Detectar columnas por CONTENIDO (no solo por nombre) — más robusto
-    const findByContent = (test) => cols.find(c => rowsBAS.slice(0,20).some(r => test(String(r[c]||""))));
-    const findByName = (re) => cols.find(c => re.test(c)) || "";
+    // Nombres fijos — leerBAS ya normaliza las columnas a estos nombres
+    const cAbr2 = "Abreviado";
+    const cAnu2 = "Anulado";
+    const cObs2 = "Observacion";
+    const cTot2 = "Total";
+    const cSuc2 = "Sucursal";
+    const colFecBAS = "Fecha";
 
-    // Columna de tipo comprobante: contiene "FAB", "REM", "NCD", etc.
-    const cAbr2 = findByContent(v => /^(FAB|REM|NCD|FAA|RMA|NDA)$/i.test(v.trim())) || findByName(/abrevi/i) || "Abreviado";
-    // Columna de anulado: contiene 0 o 1
-    const cAnu2 = findByName(/anulad/i) || findByContent(v => v==="0"||v==="1") || "Anulado";
-    // Columna de observación: contiene el patrón nro/nombre/
-    const cObs2 = findByContent(v => /^\d+\//.test(v)) || findByName(/observ/i) || "Observacion";
-    // Columna de total: numérica, valores grandes
-    const cTot2 = findByName(/^total$/i) || findByContent(v => !isNaN(parseFloat(v)) && parseFloat(v) > 100) || "Total";
-    // Columna de sucursal: contiene "WEB"
-    const cSuc2 = findByContent(v => /WEB/i.test(v)) || findByName(/sucursal/i) || "Sucursal";
-    // Columna de fecha
-    const colFecBAS = findByContent(v => /^\d{4}-\d{2}/.test(v)||/^\d{2}\/\d{2}\/\d{4}/.test(v)) || findByName(/fecha/i) || "Fecha";
-
-    // Filtrar solo facturas válidas (tipo FAB, no anuladas)
-    const fab = rowsBAS.filter(r => {
-      const abrev = String(r[cAbr2]||"").trim().toUpperCase();
-      const anul = String(r[cAnu2]||"0").trim();
-      return abrev === "FAB" && (anul === "0" || anul === "");
-    });
-    const ncd = rowsBAS.filter(r => {
-      const abrev = String(r[cAbr2]||"").trim().toUpperCase();
-      const anul = String(r[cAnu2]||"0").trim();
-      return abrev.startsWith("NCD") && (anul === "0" || anul === "");
-    });
+    const fab = rowsBAS.filter(r => r.Abreviado === "FAB" && r.Anulado !== "1");
+    const ncd = rowsBAS.filter(r => r.Abreviado.startsWith("NCD") && r.Anulado !== "1");
     const pedidos = {};
     fab.forEach(r => {
       const nro = extraerNroPedido(r[cObs2]);
