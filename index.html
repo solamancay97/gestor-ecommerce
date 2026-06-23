@@ -2708,25 +2708,36 @@ function Metas({
 
   // ── Lógica core separada para poder combinarla ──
   const _coreBAS = async () => {
-    const sB2 = rowsBAS[0] || {};
-    const findC2 = pts => Object.keys(sB2).find(k => pts.some(p => p.test(k))) || "";
-    const cObs2 = findC2([/observ/i]) || "Observacion";
-    const cAbr2 = findC2([/abrevi/i]) || "Abreviado";
-    const cAnu2 = findC2([/anulad/i]) || "Anulado";
-    const cTot2 = findC2([/^total$/i]) || "Total";
-    const cSuc2 = findC2([/sucursal/i]) || "Sucursal";
-    const colFecBAS = findC2([/^fecha$/i, /fecha/i]) || "Fecha";
-    const fab = rowsBAS.filter(r => String(r[cAbr2] || "").trim() === "FAB" && String(r[cAnu2] || "0").trim() === "0");
-    const ncd = rowsBAS.filter(r => String(r[cAbr2] || "").startsWith("NCD") && String(r[cAnu2] || "0").trim() === "0");
-    // Debug: si no encuentra FABs, mostrar qué columnas y valores tiene el archivo
-    if(fab.length===0&&rowsBAS.length>0){
-      const primeraFila=rowsBAS[0]||{};
-      const colsDetectadas=Object.keys(primeraFila).join(", ");
-      const valAbrev=primeraFila[cAbr2];
-      const valAnul=primeraFila[cAnu2];
-      const valObs=String(primeraFila[cObs2]||"").slice(0,50);
-      alert("Debug BAS:\nColumnas detectadas: "+colsDetectadas.slice(0,200)+"\n\nColumna Abreviado ("+cAbr2+"): "+valAbrev+"\nColumna Anulado ("+cAnu2+"): "+valAnul+"\nColumna Obs ("+cObs2+"): "+valObs+"\n\nTotal filas: "+rowsBAS.length);
-    }
+    if(!rowsBAS.length)return;
+    const cols = Object.keys(rowsBAS[0]);
+    // Detectar columnas por CONTENIDO (no solo por nombre) — más robusto
+    const findByContent = (test) => cols.find(c => rowsBAS.slice(0,20).some(r => test(String(r[c]||""))));
+    const findByName = (re) => cols.find(c => re.test(c)) || "";
+
+    // Columna de tipo comprobante: contiene "FAB", "REM", "NCD", etc.
+    const cAbr2 = findByContent(v => /^(FAB|REM|NCD|FAA|RMA|NDA)$/i.test(v.trim())) || findByName(/abrevi/i) || "Abreviado";
+    // Columna de anulado: contiene 0 o 1
+    const cAnu2 = findByName(/anulad/i) || findByContent(v => v==="0"||v==="1") || "Anulado";
+    // Columna de observación: contiene el patrón nro/nombre/
+    const cObs2 = findByContent(v => /^\d+\//.test(v)) || findByName(/observ/i) || "Observacion";
+    // Columna de total: numérica, valores grandes
+    const cTot2 = findByName(/^total$/i) || findByContent(v => !isNaN(parseFloat(v)) && parseFloat(v) > 100) || "Total";
+    // Columna de sucursal: contiene "WEB"
+    const cSuc2 = findByContent(v => /WEB/i.test(v)) || findByName(/sucursal/i) || "Sucursal";
+    // Columna de fecha
+    const colFecBAS = findByContent(v => /^\d{4}-\d{2}/.test(v)||/^\d{2}\/\d{2}\/\d{4}/.test(v)) || findByName(/fecha/i) || "Fecha";
+
+    // Filtrar solo facturas válidas (tipo FAB, no anuladas)
+    const fab = rowsBAS.filter(r => {
+      const abrev = String(r[cAbr2]||"").trim().toUpperCase();
+      const anul = String(r[cAnu2]||"0").trim();
+      return abrev === "FAB" && (anul === "0" || anul === "");
+    });
+    const ncd = rowsBAS.filter(r => {
+      const abrev = String(r[cAbr2]||"").trim().toUpperCase();
+      const anul = String(r[cAnu2]||"0").trim();
+      return abrev.startsWith("NCD") && (anul === "0" || anul === "");
+    });
     const pedidos = {};
     fab.forEach(r => {
       const nro = extraerNroPedido(r[cObs2]);
