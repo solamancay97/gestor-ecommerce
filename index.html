@@ -2706,6 +2706,7 @@ function Metas({
 
   // ── Lógica core separada para poder combinarla ──
   const _coreBAS = async () => {
+    console.log('_coreBAS inicio. rowsBAS:',rowsBAS.length);
     if(!rowsBAS.length)return;
     // Nombres fijos — leerBAS ya normaliza las columnas a estos nombres
     const cAbr2 = "Abreviado";
