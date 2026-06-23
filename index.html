@@ -2601,27 +2601,37 @@ function Metas({
     const reader = new FileReader();
     reader.onload = ev => {
       try {
-        const wb = XLSX.read(ev.target.result, {type:"binary",raw:false,dateNF:"yyyy-mm-dd"});
+        const wb = XLSX.read(ev.target.result, {type:"binary"});
         const ws = wb.Sheets[wb.SheetNames[0]];
-        // Leer como arrays (mucho más liviano con 130 columnas x 33k filas)
-        const data = XLSX.utils.sheet_to_json(ws, {header:1,raw:false,defval:"",dateNF:"yyyy-mm-dd"});
-        if(!data.length){setRowsBAS([]);setCargandoBAS(false);return;}
-        const hdrs = data[0].map(String);
-        // Encontrar índice de las 6 columnas necesarias (no cargar las 124 restantes)
-        const fi = pts => hdrs.findIndex(h => pts.some(p => p.test(h)));
-        const iA=fi([/abrevi/i]), iN=fi([/anulad/i]), iO=fi([/observ/i]);
-        const iT=fi([/^total$/i]), iS=fi([/sucursal/i]), iF=fi([/^fecha$/i,/fecha/i]);
-        // Construir objetos solo con esas 6 propiedades
-        const rows = data.slice(1).filter(r=>r[iA]).map(r=>({
-          Abreviado:   String(r[iA]||"").trim(),
-          Anulado:     String(r[iN]||"0").trim(),
-          Observacion: String(r[iO]||""),
-          Total:       String(r[iT]||"0"),
-          Sucursal:    String(r[iS]||""),
-          Fecha:       String(r[iF]||"")
-        }));
+        const ref = ws['!ref'];
+        if(!ref){setRowsBAS([]);setCargandoBAS(false);return;}
+        const rng = XLSX.utils.decode_range(ref);
+        // Leer solo la fila de headers para encontrar índices
+        const hdrs = [];
+        for(let C=rng.s.c;C<=rng.e.c;C++){
+          const cell=ws[XLSX.utils.encode_cell({r:rng.s.r,c:C})];
+          hdrs.push(cell?String(cell.v||""):"");
+        }
+        const fi=pts=>hdrs.findIndex(h=>pts.some(p=>p.test(h)));
+        const iA=fi([/abrevi/i]),iN=fi([/anulad/i]),iO=fi([/observ/i]);
+        const iT=fi([/^total$/i]),iS=fi([/sucursal/i]),iF=fi([/^fecha$/i,/fecha/i]);
+        // Leer fila por fila solo las 6 columnas necesarias
+        const rows=[];
+        for(let R=rng.s.r+1;R<=rng.e.r;R++){
+          const cv=c=>{const cell=ws[XLSX.utils.encode_cell({r:R,c})];return cell?String(cell.w||cell.v||""):""};
+          const abrev=(iA>=0?cv(iA):"").trim();
+          if(!abrev)continue;
+          rows.push({
+            Abreviado:abrev,
+            Anulado:  iN>=0?cv(iN):"0",
+            Observacion:iO>=0?cv(iO):"",
+            Total:    iT>=0?cv(iT):"0",
+            Sucursal: iS>=0?cv(iS):"",
+            Fecha:    iF>=0?cv(iF):""
+          });
+        }
         setRowsBAS(rows);
-      } catch(err){alert("Error BAS: "+err.message);}
+      }catch(err){alert("Error BAS: "+err.message);}
       setCargandoBAS(false);
     };
     reader.readAsBinaryString(file);
