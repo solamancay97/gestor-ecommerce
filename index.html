@@ -2637,14 +2637,31 @@ function Metas({
         const lT=iT>=0?cl2(iT):null,lS=iS>=0?cl2(iS):null,lF=iF>=0?cl2(iF):null;
         const colObsNombre=iO>=0?hdrs[iO]:null;
         const gv=(l,R)=>{if(!l)return'';const cl=ws[l+R];if(!cl)return'';return String(cl.w!==undefined&&cl.w!==''?cl.w:cl.v!==undefined?cl.v:'')||"";};
-        // Leer todas las columnas para diagnóstico de primer FAB
         const colLetras=hdrs.map((_,i)=>cl2(i));
+        // Auto-detectar columna con números de pedido (5-8 dígitos) entre las primeras FABs
+        const reNro=/\b(\d{5,8})\b/;
+        const skipCols=new Set([iA,iN,iT,iF]);
+        let iOauto=iO; // primero usar el detectado por nombre
+        // Escanear primeras 20 filas para detectar columna con orden
+        const sampleRows=[];
+        for(let R=rng.s.r+2;R<=Math.min(rng.s.r+30,rng.e.r+1);R++){
+          const ab=lA?gv(lA,R).trim():'';
+          if(ab==="FAB"||ab==="FA"){const o={};hdrs.forEach((h,i)=>{if(h.trim()&&!skipCols.has(i))o[i]=gv(colLetras[i],R);});sampleRows.push(o);if(sampleRows.length>=20)break;}
+        }
+        if(sampleRows.length>0){
+          const scoreCol={};
+          sampleRows.forEach(o=>Object.entries(o).forEach(([ci,v])=>{if(reNro.test(String(v)))scoreCol[ci]=(scoreCol[ci]||0)+1;}));
+          const bestCol=Object.entries(scoreCol).sort((a,b)=>b[1]-a[1])[0];
+          if(bestCol && bestCol[1]>=Math.ceil(sampleRows.length*0.3)) iOauto=Number(bestCol[0]);
+        }
+        const lOauto=iOauto>=0?cl2(iOauto):null;
+        const colObsNombreFinal=iOauto>=0?hdrs[iOauto]:null;
         const rows=[];
         let primeraFAB=null;
         for(let R=rng.s.r+2;R<=rng.e.r+1;R++){
           const ab=lA?gv(lA,R).trim():'';
           if(!ab)continue;
-          const row={Abreviado:ab,Anulado:lN?gv(lN,R):'0',Observacion:lO?gv(lO,R):'',Total:lT?gv(lT,R):'0',Sucursal:lS?gv(lS,R):'',Fecha:lF?gv(lF,R):''};
+          const row={Abreviado:ab,Anulado:lN?gv(lN,R):'0',Observacion:lOauto?gv(lOauto,R):'',Total:lT?gv(lT,R):'0',Sucursal:lS?gv(lS,R):'',Fecha:lF?gv(lF,R):''};
           rows.push(row);
           if(!primeraFAB && (ab==="FAB"||ab==="FA")){
             const raw={};
@@ -2653,7 +2670,7 @@ function Metas({
           }
         }
         console.log("BAS: "+rows.length+" filas. FAB:"+rows.filter(r=>r.Abreviado==="FAB").length);
-        rows._colObsNombre=colObsNombre;
+        rows._colObsNombre=colObsNombreFinal;
         rows._hdrs=hdrsNoVacios.slice(0,20);
         rows._primeraFAB=primeraFAB;
         setRowsBAS(rows);
