@@ -2681,8 +2681,17 @@ function Metas({
     reader.readAsBinaryString(file);
   };
   const extraerNroPedido = obs => {
-    const m = String(obs || "").match(/^(\d+)\//);
-    return m ? m[1] : null;
+    const s = String(obs || "").trim();
+    // "123456/texto" o "123456 texto"
+    const m1 = s.match(/^(\d{4,10})[\/\s]/);
+    if (m1) return m1[1];
+    // Solo número (4-10 dígitos)
+    const m2 = s.match(/^(\d{4,10})$/);
+    if (m2) return m2[1];
+    // Número de 5-8 dígitos en cualquier parte del string
+    const m3 = s.match(/\b(\d{5,8})\b/);
+    if (m3) return m3[1];
+    return null;
   };
   const leerWMS = e => {
     const file = e.target.files[0];
@@ -2794,8 +2803,11 @@ function Metas({
     })();
     // Mostrar resultado SIEMPRE (antes de Supabase)
     const ncdSet = new Set(ncd.map(r => extraerNroPedido(r[cObs2])).filter(Boolean));
+    console.log('BAS muestra Observacion (primeras 5 FABs):', fab.slice(0,5).map(r=>JSON.stringify(r.Observacion)));
+    console.log('BAS muestra Sucursal (primeras 5 FABs):', fab.slice(0,5).map(r=>JSON.stringify(r.Sucursal)));
     console.log('_coreBAS resultado: pedidos='+Object.keys(pedidos).length+' totales='+JSON.stringify(totales).slice(0,80));
-    setResumenBAS({totales,cantPed,mesBAS,totalPedidosUnicos:Object.keys(pedidos).length,ncdCount:ncdSet.size,fabTotal:fab.length,sucSinMapa:Array.from(sucSinMapa)});
+    const muestraObs = fab.slice(0,5).map(r=>String(r.Observacion||"")).filter(s=>s.length>0);
+    setResumenBAS({totales,cantPed,mesBAS,totalPedidosUnicos:Object.keys(pedidos).length,ncdCount:ncdSet.size,fabTotal:fab.length,sucSinMapa:Array.from(sucSinMapa),muestraObs});
     if (mes !== mesBAS) setMes(mesBAS);
     // Guardar en Supabase si está disponible
     if (esAdmin && supa) {
@@ -3260,7 +3272,10 @@ function Metas({
   }, "✓ Metas actualizadas")), resumenBAS.sucSinMapa && resumenBAS.sucSinMapa.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "rounded-xl px-4 py-2 text-xs font-semibold mt-2",
     style: {background: C.amberS, color: C.amber}
-  }, "⚠ Sucursales no reconocidas (no se suman a ninguna tienda): ", resumenBAS.sucSinMapa.join(" · "), ". Avisale al admin para mapearlas."), /*#__PURE__*/React.createElement("div", {
+  }, "⚠ Sucursales no reconocidas (no se suman a ninguna tienda): ", resumenBAS.sucSinMapa.join(" · "), ". Avisale al admin para mapearlas."), resumenBAS.totalPedidosUnicos === 0 && resumenBAS.fabTotal > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "rounded-xl px-4 py-2 text-xs font-semibold mt-2",
+    style: {background:"#FFF3CD",color:"#856404"}
+  }, "⚠ No se extrajeron números de pedido del campo Observacion. ", resumenBAS.muestraObs && resumenBAS.muestraObs.length > 0 ? /*#__PURE__*/React.createElement("span", null, "Muestra: ", resumenBAS.muestraObs.map((v,i)=>/*#__PURE__*/React.createElement("code", {key:i, className:"mx-1", style:{background:"rgba(0,0,0,.08)",padding:"1px 4px",borderRadius:3}},v||"(vacío)"))) : /*#__PURE__*/React.createElement("span", null, "Campo Observacion vacío en todas las FABs.")), /*#__PURE__*/React.createElement("div", {
     className: "grid sm:grid-cols-3 gap-3"
   }, Object.entries(resumenBAS.totales).map(([tienda, total]) => /*#__PURE__*/React.createElement("div", {
     key: tienda,
