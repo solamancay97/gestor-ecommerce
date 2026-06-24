@@ -2602,12 +2602,12 @@ function Metas({
   useEffect(() => {
     cargarMetas();
   }, [cargarMetas]);
-  const metasDeMes = TIENDAS_META.map(t => metas.find(m => m.mes === mes && m.tienda === t) || {
-    mes,
-    tienda: t,
-    meta: 0,
-    real: 0,
-    notas: ""
+  // metasDeMes: real viene del BAS cargado (neto = FABs-NCDs) cuando está disponible,
+  // y cae a Supabase si no hay BAS en esta sesión.
+  const metasDeMes = TIENDAS_META.map(t => {
+    const base = metas.find(m => m.mes === mes && m.tienda === t) || { mes, tienda: t, meta: 0, real: 0, notas: "" };
+    const realBAS = resumenBAS?.porMesNeto?.[mes]?.[t];
+    return realBAS != null ? { ...base, real: realBAS } : base;
   });
   const guardarMeta = async f => {
     await supa.from("metas_mensuales").upsert({
@@ -2825,13 +2825,21 @@ function Metas({
         pedMesTienda[m][tienda].add(nro);
       }
     });
-    // NCD por mes (cantidad y monto)
+    // NCD por mes (cantidad, monto, y también por tienda para descontar del real)
     const ncdPorMes = {};
+    const ncdPorMesTienda = {};  // { "2026-06": { TimeOut: 340063, ... } }
     ncd.forEach(r => {
+      const suc = String(r.Sucursal || "").trim();
+      const tienda = mapearTienda(suc);
       const m = parseMesBAS(r.Fecha) || mes;
+      const imp = Math.abs(Number(r.Importe) || 0);
       if (!ncdPorMes[m]) ncdPorMes[m] = {cant:0, monto:0};
       ncdPorMes[m].cant++;
-      ncdPorMes[m].monto += Math.abs(Number(r.Importe) || 0);
+      ncdPorMes[m].monto += imp;
+      if (tienda) {
+        if (!ncdPorMesTienda[m]) ncdPorMesTienda[m] = {};
+        ncdPorMesTienda[m][tienda] = (ncdPorMesTienda[m][tienda] || 0) + imp;
+      }
     });
     const meses = Object.keys(porMes).sort();
     // cantidad de pedidos únicos por mes/tienda (para mostrar)
@@ -2839,14 +2847,22 @@ function Metas({
     Object.entries(pedMesTienda).forEach(([m,tt])=>{ cantPedMes[m]={}; Object.entries(tt).forEach(([t,s])=>cantPedMes[m][t]=s.size); });
     const primeraFAB = rowsBAS._primeraFAB || null;
     const basCols = rowsBAS._hdrs || [];
-    setResumenBAS({porMes, ncdPorMes, cantPedMes, meses, fabTotal:fab.length, ncdTotal:ncd.length, sucSinMapa:Array.from(sucSinMapa), colImporte:rowsBAS._colImporte, basCols, primeraFAB});
+    // Real NETO por mes/tienda = FABs - NCDs (para mostrar en Metas y guardar en Supabase)
+    const porMesNeto = {};
+    Object.entries(porMes).forEach(([m,tt]) => {
+      porMesNeto[m] = {};
+      Object.entries(tt).forEach(([t,fab]) => {
+        porMesNeto[m][t] = Math.max(0, fab - (ncdPorMesTienda[m]?.[t] || 0));
+      });
+    });
+    setResumenBAS({porMes, porMesNeto, ncdPorMes, ncdPorMesTienda, cantPedMes, meses, fabTotal:fab.length, ncdTotal:ncd.length, sucSinMapa:Array.from(sucSinMapa), colImporte:rowsBAS._colImporte, basCols, primeraFAB});
     // Posicionar la vista de metas en el mes más reciente del archivo
     const mesReciente = meses[meses.length-1];
     if (mesReciente && mes !== mesReciente) setMes(mesReciente);
     // Guardar en Supabase: una fila por (mes, tienda)
     if (esAdmin && supa) {
       try {
-        for (const [m, tt] of Object.entries(porMes)) {
+        for (const [m, tt] of Object.entries(porMesNeto)) {
           for (const [tienda, real] of Object.entries(tt)) {
             await supa.from('metas_mensuales').upsert({mes:m, tienda, real:Math.round(real)}, {onConflict:'mes,tienda'});
           }
@@ -3074,8 +3090,8 @@ function Metas({
         color: C.gray
       }
     }, "Actualización manual (no está en BAS)"));
-  })), metas.length > 0 && /*#__PURE__*/React.createElement(ProgresoAnual, {
-    metas: metas,
+  })), (metas.length > 0 || resumenBAS) && /*#__PURE__*/React.createElement(ProgresoAnual, {
+    metas: resumenBAS ? metas.map(m => { const r = resumenBAS.porMesNeto?.[m.mes]?.[m.tienda]; return r != null ? { ...m, real: r } : m; }) : metas,
     fmtUSD: fmtUSD,
     colMeta: colMeta,
     fmtM: fmtM
@@ -3265,30 +3281,29 @@ function Metas({
   }, fmtM(m), /*#__PURE__*/React.createElement("span", {
     className: "text-xs font-normal",
     style: {color: C.gray}
-  }, "Total ", fmtUSD(Object.values(resumenBAS.porMes[m]).reduce((a,b)=>a+b,0)), resumenBAS.ncdPorMes[m] ? ` · ${resumenBAS.ncdPorMes[m].cant} NCD (−${fmtUSD(resumenBAS.ncdPorMes[m].monto)})` : "")), /*#__PURE__*/React.createElement("div", {
+  }, "Neto ", fmtUSD(Object.values(resumenBAS.porMesNeto?.[m]||{}).reduce((a,b)=>a+b,0)), " · Bruto ", fmtUSD(Object.values(resumenBAS.porMes[m]).reduce((a,b)=>a+b,0)), resumenBAS.ncdPorMes[m] ? ` · ${resumenBAS.ncdPorMes[m].cant} NCD (−${fmtUSD(resumenBAS.ncdPorMes[m].monto)})` : "")), /*#__PURE__*/React.createElement("div", {
     className: "grid sm:grid-cols-3 gap-3"
-  }, Object.entries(resumenBAS.porMes[m]).map(([tienda, total]) => /*#__PURE__*/React.createElement("div", {
-    key: tienda,
-    className: "rounded-xl p-3",
-    style: {
-      background: "#F6F7F9"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-xs font-bold uppercase tracking-wide mb-1",
-    style: {
-      color: C.gray
-    }
-  }, tienda), /*#__PURE__*/React.createElement("div", {
-    className: "text-xl font-black tabular-nums fraunces",
-    style: {
-      color: C.ink
-    }
-  }, fmtUSD(total)), /*#__PURE__*/React.createElement("div", {
-    className: "text-xs",
-    style: {
-      color: C.gray
-    }
-  }, ((resumenBAS.cantPedMes[m] || {})[tienda] || 0), " pedidos"))))))), pendientes && /*#__PURE__*/React.createElement(ResultadoCruce, {
+  }, Object.entries(resumenBAS.porMes[m]).map(([tienda, fabBruto]) => {
+    const neto = resumenBAS.porMesNeto?.[m]?.[tienda] ?? fabBruto;
+    const ncdT = resumenBAS.ncdPorMesTienda?.[m]?.[tienda] || 0;
+    return /*#__PURE__*/React.createElement("div", {
+      key: tienda,
+      className: "rounded-xl p-3",
+      style: { background: "#F6F7F9" }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "text-xs font-bold uppercase tracking-wide mb-1",
+      style: { color: C.gray }
+    }, tienda), /*#__PURE__*/React.createElement("div", {
+      className: "text-xl font-black tabular-nums fraunces",
+      style: { color: C.ink }
+    }, fmtUSD(neto)), ncdT > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "text-xs",
+      style: { color: C.amber }
+    }, "−", fmtUSD(ncdT), " NCD"), /*#__PURE__*/React.createElement("div", {
+      className: "text-xs",
+      style: { color: C.gray }
+    }, ((resumenBAS.cantPedMes[m] || {})[tienda] || 0), " pedidos"));
+  })))), pendientes && /*#__PURE__*/React.createElement(ResultadoCruce, {
     pendientes: pendientes
   }), formMeta && /*#__PURE__*/React.createElement("div", {
     className: "fixed inset-0 z-50 flex items-center justify-center p-4",
