@@ -2142,9 +2142,22 @@ function ResultadoCruce({
   }];
   const [tabAct, setTabAct] = useState(grupos.revisar.length > 0 ? "revisar" : (grupos.facturaDup || []).length > 0 ? "facturaDup" : "facturado");
   const tabActual = TABS.find(t => t.id === tabAct) || TABS[0];
+  const sinFacturaTotal = grupos.revisar.length + grupos.pendienteOK.length;
+  const sinFacturaUrgente = grupos.revisar.length;
+  const sinFacturaMonto = sumImporte(grupos.revisar) + sumImporte(grupos.pendienteOK);
   return /*#__PURE__*/React.createElement("div", {
     className: "space-y-4"
-  }, /*#__PURE__*/React.createElement("div", {
+  }, sinFacturaTotal > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "rounded-2xl p-4",
+    style: {background: sinFacturaUrgente > 0 ? "#FFF1F1" : "#EFF6FF", borderLeft: `4px solid ${sinFacturaUrgente > 0 ? C.red : C.blue}`}
+  }, /*#__PURE__*/React.createElement("div", {className:"font-black text-lg tabular-nums fraunces", style:{color: sinFacturaUrgente > 0 ? C.red : C.blue}},
+    sinFacturaTotal, " pedidos sin factura en BAS",
+    " — ", fmtI(sinFacturaMonto)
+  ), /*#__PURE__*/React.createElement("div", {className:"text-xs mt-1", style:{color:C.gray}},
+    sinFacturaUrgente > 0 && /*#__PURE__*/React.createElement("span", {style:{color:C.red, fontWeight:700}}, sinFacturaUrgente, " urgentes (despachados/entregados sin factura)"),
+    sinFacturaUrgente > 0 && grupos.pendienteOK.length > 0 && " · ",
+    grupos.pendienteOK.length > 0 && /*#__PURE__*/React.createElement("span", null, grupos.pendienteOK.length, " en proceso o recientes (OK por ahora)")
+  )), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-3 sm:grid-cols-6 gap-2"
   }, TABS.map(t => /*#__PURE__*/React.createElement("button", {
     key: t.id,
@@ -2637,6 +2650,8 @@ function Metas({
         const lT=iT>=0?cl2(iT):null,lS=iS>=0?cl2(iS):null,lF=iF>=0?cl2(iF):null;
         const colObsNombre=iO>=0?hdrs[iO]:null;
         const gv=(l,R)=>{if(!l)return'';const cl=ws[l+R];if(!cl)return'';return String(cl.w!==undefined&&cl.w!==''?cl.w:cl.v!==undefined?cl.v:'')||"";};
+        // Para columnas numéricas leer el valor raw de Excel (no el texto formateado)
+        const gvn=(l,R)=>{if(!l)return 0;const cl=ws[l+R];if(!cl)return 0;if(typeof cl.v==='number')return cl.v;const s=String(cl.w||cl.v||'0').trim().replace(/\s/g,'');if(!s||s==='-')return 0;if(s.includes('.')&&s.includes(',')){const li=s.lastIndexOf(',');return li>s.lastIndexOf('.')?parseFloat(s.replace(/\./g,'').replace(',','.'))||0:parseFloat(s.replace(/,/g,''))||0;}if(s.includes('.')&&!s.includes(',')){const p=s.split('.');return p.length>2||p[1]?.length===3?parseFloat(s.replace(/\./g,''))||0:parseFloat(s)||0;}if(s.includes(',')&&!s.includes('.')){const p=s.split(',');return p.length>2||p[1]?.length===3?parseFloat(s.replace(/,/g,''))||0:parseFloat(s.replace(',','.'))||0;}return parseFloat(s)||0;};
         const colLetras=hdrs.map((_,i)=>cl2(i));
         // Auto-detectar columna con números de pedido (5-8 dígitos) entre las primeras FABs
         const reNro=/\b(\d{5,8})\b/;
@@ -2661,7 +2676,7 @@ function Metas({
         for(let R=rng.s.r+2;R<=rng.e.r+1;R++){
           const ab=lA?gv(lA,R).trim():'';
           if(!ab)continue;
-          const row={Abreviado:ab,Anulado:lN?gv(lN,R):'0',Observacion:lOauto?gv(lOauto,R):'',Total:lT?gv(lT,R):'0',Sucursal:lS?gv(lS,R):'',Fecha:lF?gv(lF,R):''};
+          const row={Abreviado:ab,Anulado:lN?gv(lN,R):'0',Observacion:lOauto?gv(lOauto,R):'',Total:lT?gvn(lT,R):0,Sucursal:lS?gv(lS,R):'',Fecha:lF?gv(lF,R):''};
           rows.push(row);
           if(!primeraFAB && (ab==="FAB"||ab==="FA")){
             const raw={};
@@ -2788,7 +2803,7 @@ function Metas({
       const tienda = mapearTienda(suc);
       if (!tienda) { if (suc) sucSinMapa.add(suc); }
       if (!nro || !tienda) return;
-      const total = parseFloat(String(r[cTot2] || "0").replace(",", ".")) || 0;
+      const total = Number(r[cTot2]) || 0;
       if (!pedidos[nro]) pedidos[nro] = {
         tienda,
         total: 0
