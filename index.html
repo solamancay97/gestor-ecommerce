@@ -2625,13 +2625,17 @@ function Metas({
           hdrs.push(cell?String(cell.v||""):"");
         }
         const fi=pts=>hdrs.findIndex(h=>pts.some(p=>p.test(h)));
-        const iA=fi([/abrevi/i]),iN=fi([/anulad/i]),iO=fi([/observ/i]);
-        const iT=fi([/^total$/i]),iS=fi([/sucursal/i]),iF=fi([/^fecha$/i,/fecha/i]);
+        const iA=fi([/abrevi/i]),iN=fi([/anulad/i]);
+        const iO=fi([/observ/i,/referenc/i,/glosa/i,/concepto/i,/detalle/i,/descrip/i,/pedido/i,/nro\.?\s*ped/i]);
+        const iT=fi([/^total$/i,/^importe$/i,/^monto$/i]),iS=fi([/sucursal/i,/local/i,/tienda/i]),iF=fi([/^fecha$/i,/fecha/i]);
+        const hdrsNoVacios=hdrs.filter(h=>h.trim().length>0);
+        console.log("BAS hdrs:", hdrs.slice(0,20));
         console.log("BAS cols: A="+iA+" N="+iN+" O="+iO+" T="+iT+" S="+iS+" F="+iF);
-        if(iA<0){alert("Col Abreviado no encontrada. Cols: "+hdrs.slice(0,15).join(", "));setCargandoBAS(false);return;}
+        if(iA<0){alert("Col Abreviado no encontrada.\nColumnas del archivo: "+hdrsNoVacios.slice(0,20).join(", "));setCargandoBAS(false);return;}
         const cl2=C=>{let s='',n=C;do{s=String.fromCharCode(65+n%26)+s;n=Math.floor(n/26)-1;}while(n>=0);return s;};
         const lA=iA>=0?cl2(iA):null,lN=iN>=0?cl2(iN):null,lO=iO>=0?cl2(iO):null;
         const lT=iT>=0?cl2(iT):null,lS=iS>=0?cl2(iS):null,lF=iF>=0?cl2(iF):null;
+        const colObsNombre=iO>=0?hdrs[iO]:null;
         const gv=(l,R)=>{if(!l)return'';const cl=ws[l+R];if(!cl)return'';return String(cl.w!==undefined&&cl.w!==''?cl.w:cl.v!==undefined?cl.v:'')||"";};
         const rows=[];
         for(let R=rng.s.r+2;R<=rng.e.r+1;R++){
@@ -2640,6 +2644,8 @@ function Metas({
           rows.push({Abreviado:ab,Anulado:lN?gv(lN,R):'0',Observacion:lO?gv(lO,R):'',Total:lT?gv(lT,R):'0',Sucursal:lS?gv(lS,R):'',Fecha:lF?gv(lF,R):''});
         }
         console.log("BAS: "+rows.length+" filas. FAB:"+rows.filter(r=>r.Abreviado==="FAB").length);
+        rows._colObsNombre=colObsNombre;
+        rows._hdrs=hdrsNoVacios.slice(0,20);
         setRowsBAS(rows);
       }catch(err){alert("Error BAS: "+err.message);}
       setCargandoBAS(false);
@@ -2807,7 +2813,9 @@ function Metas({
     console.log('BAS muestra Sucursal (primeras 5 FABs):', fab.slice(0,5).map(r=>JSON.stringify(r.Sucursal)));
     console.log('_coreBAS resultado: pedidos='+Object.keys(pedidos).length+' totales='+JSON.stringify(totales).slice(0,80));
     const muestraObs = fab.slice(0,5).map(r=>String(r.Observacion||"")).filter(s=>s.length>0);
-    setResumenBAS({totales,cantPed,mesBAS,totalPedidosUnicos:Object.keys(pedidos).length,ncdCount:ncdSet.size,fabTotal:fab.length,sucSinMapa:Array.from(sucSinMapa),muestraObs});
+    const colObsNombre = rowsBAS._colObsNombre || null;
+    const basCols = rowsBAS._hdrs || [];
+    setResumenBAS({totales,cantPed,mesBAS,totalPedidosUnicos:Object.keys(pedidos).length,ncdCount:ncdSet.size,fabTotal:fab.length,sucSinMapa:Array.from(sucSinMapa),muestraObs,colObsNombre,basCols});
     if (mes !== mesBAS) setMes(mesBAS);
     // Guardar en Supabase si está disponible
     if (esAdmin && supa) {
@@ -3275,7 +3283,7 @@ function Metas({
   }, "⚠ Sucursales no reconocidas (no se suman a ninguna tienda): ", resumenBAS.sucSinMapa.join(" · "), ". Avisale al admin para mapearlas."), resumenBAS.totalPedidosUnicos === 0 && resumenBAS.fabTotal > 0 && /*#__PURE__*/React.createElement("div", {
     className: "rounded-xl px-4 py-2 text-xs font-semibold mt-2",
     style: {background:"#FFF3CD",color:"#856404"}
-  }, "⚠ No se extrajeron números de pedido del campo Observacion. ", resumenBAS.muestraObs && resumenBAS.muestraObs.length > 0 ? /*#__PURE__*/React.createElement("span", null, "Muestra: ", resumenBAS.muestraObs.map((v,i)=>/*#__PURE__*/React.createElement("code", {key:i, className:"mx-1", style:{background:"rgba(0,0,0,.08)",padding:"1px 4px",borderRadius:3}},v||"(vacío)"))) : /*#__PURE__*/React.createElement("span", null, "Campo Observacion vacío en todas las FABs.")), /*#__PURE__*/React.createElement("div", {
+  }, resumenBAS.colObsNombre ? /*#__PURE__*/React.createElement("span", null, "⚠ Columna detectada como \"", resumenBAS.colObsNombre, "\" pero sin números de pedido. Muestra: ", (resumenBAS.muestraObs||[]).map((v,i)=>/*#__PURE__*/React.createElement("code", {key:i, className:"mx-1", style:{background:"rgba(0,0,0,.08)",padding:"1px 4px",borderRadius:3}},v||"(vacío)"))) : /*#__PURE__*/React.createElement("span", null, "⚠ No se encontró columna de referencia/pedido en el BAS. Columnas del archivo: ", (resumenBAS.basCols||[]).join(", "))), /*#__PURE__*/React.createElement("div", {
     className: "grid sm:grid-cols-3 gap-3"
   }, Object.entries(resumenBAS.totales).map(([tienda, total]) => /*#__PURE__*/React.createElement("div", {
     key: tienda,
