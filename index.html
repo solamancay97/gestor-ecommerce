@@ -63,7 +63,8 @@ const {
   useState,
   useEffect,
   useRef,
-  useCallback
+  useCallback,
+  useMemo
 } = React;
 
 /* ── paleta ── */
@@ -3420,8 +3421,8 @@ function Operativa() {
   const [archivoB, setArchivoB] = useState(null);
   const [rowsB, setRowsB] = useState([]);
   const [cargandoB, setCargandoB] = useState(false);
-  // rowsA = concatenación de las tres tiendas
-  const rowsA = [].concat(rowsFenT.TimeOut.map(r => ({
+  // rowsA = concatenación de las tres tiendas (memoizado: puede ser 10k+ filas)
+  const rowsA = useMemo(() => [].concat(rowsFenT.TimeOut.map(r => ({
     ...r,
     _tiendaFen: "TimeOut"
   })), rowsFenT.TiendaNacional.map(r => ({
@@ -3430,7 +3431,7 @@ function Operativa() {
   })), rowsFenT.Classico.map(r => ({
     ...r,
     _tiendaFen: "Classico"
-  })));
+  }))), [rowsFenT]);
   const [filtroDias, setFiltroDias] = useState(3);
   const [filtroTienda, setFiltroTienda] = useState("todas");
   const [filtroFecha, setFiltroFecha] = useState({
@@ -3519,11 +3520,15 @@ function Operativa() {
       const d = new Date(desde);
       if (isNaN(d)) return null;
       const hoy = new Date();
-      let c = 0,
-        cur = new Date(d);
-      while (cur.toDateString() !== hoy.toDateString()) {
+      // Normalizar a medianoche y comparar solo la fecha (evita bucle infinito con fechas futuras/horas)
+      let cur = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const fin = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+      if (cur >= fin) return 0; // pedido de hoy o fecha futura → 0 días hábiles transcurridos
+      let c = 0;
+      while (cur < fin) {
         cur.setDate(cur.getDate() + 1);
-        if (cur.getDay() !== 0 && cur.getDay() !== 6) c++;
+        const g = cur.getDay();
+        if (g !== 0 && g !== 6) c++;
       }
       return c;
     } catch {
