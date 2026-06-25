@@ -21,7 +21,9 @@
   :root{--ac:#0A4DA3;--ac-s:#E8F0FB;--bg:#F6F7F9;--hd:#0E1B33;}
   *{box-sizing:border-box;}
   body{font-family:'Poppins',sans-serif;margin:0;}
-  h1,h2,h3,.fraunces{font-family:'Fraunces',Georgia,serif;}
+  h1,h2,h3{font-family:'Fraunces',Georgia,serif;}
+  /* Números antes usaban Fraunces (display serif, poco claro). Ahora Poppins, limpio y tabular. */
+  .fraunces{font-family:'Poppins',sans-serif;letter-spacing:-0.02em;font-feature-settings:'tnum' 1;}
   input[type=range]{accent-color:var(--ac);}
   .drag-over{outline:2px dashed var(--ac);outline-offset:2px;background:var(--ac-s)!important;}
 </style>
@@ -3605,9 +3607,9 @@ function Operativa() {
     const depo = String(row.deposito || "").replace(/\.0+$/, "").trim();
     const sinStock = depo === "0";                 // Depo 0 = el WMS no encontró stock → acción manual
     const ccDepo9 = clickCollect && depo === "9";  // C&C no debería pedirse a depo 9
-    // Lead time: días corridos compra → entrega, SOLO con la entrega real de Fenicio (estado "Pedido entregado")
+    // Tiempo a despacho: días corridos compra → "Fecha despacho" del WMS (dato real; la entrega no se registra)
     let leadtime = null;
-    if (fenEntregado && row.fechaEntrega) { const a = parseFecha(row.fecha), b = parseFecha(row.fechaEntrega); if (a && b && b >= a) leadtime = Math.round((b - a) / 86400000); }
+    if (row.fechaDespacho && row.fechaDespacho !== "-") { const a = parseFecha(row.fecha), b = parseFecha(row.fechaDespacho); if (a && b && b >= a) leadtime = Math.round((b - a) / 86400000); }
     return { ...row, dias, diasDesp, fenEntregado, wmsEntregado, entregado, cancelado, despachadoWMS, atrasado, critico, inconsistente, posibleNoDespacho, estancado, clickCollect, pickup, sinStock, ccDepo9, leadtime };
   };
   // Carga el seguimiento ya analizado (con comentarios) al entrar a la pestaña, para que el análisis quede fijo.
@@ -3813,7 +3815,7 @@ function Operativa() {
         "Estado Fenicio": r.estadoFen, "Estado WMS": r.estadoWMS, "Estado Eco": r.estadoEco,
         "Dias habiles": r.dias, "Deposito": r.deposito, "Fecha despacho": r.fechaDespacho,
         "Forma entrega": r.formaEntrega || (r.clickCollect ? "Click & Collect" : r.pickup ? "Pickup" : ""),
-        "Lead time (dias)": r.leadtime != null ? r.leadtime : "",
+        "Tiempo a despacho (dias)": r.leadtime != null ? r.leadtime : "",
         "Importe": r.importe,
         "Atrasado": r.atrasado ? "Si" : "", "Critico": r.critico ? "Si" : "",
         "Validar despacho": r.posibleNoDespacho ? "Si" : "", "Estancado": r.estancado ? "Si" : "",
@@ -4109,7 +4111,7 @@ function Operativa() {
     /*#__PURE__*/React.createElement(KpiBtn, { label: "Estancados >2d", value: estancados.length, color: C.amber, sub: "Sin avanzar en WMS", tab: "estancados", border: C.amberS }),
     /*#__PURE__*/React.createElement(KpiBtn, { label: "Entregados", value: entregadosArr.length, color: C.green, border: C.greenS }),
     /*#__PURE__*/React.createElement(KpiBtn, { label: "Tasa cumplimiento", value: tasaCumpl + "%", color: tasaCumpl >= 90 ? C.green : tasaCumpl >= 70 ? C.amber : C.red, sub: entregadosArr.length + " de " + resultado.length, border: C.greenS }),
-    /*#__PURE__*/React.createElement(KpiBtn, { label: "Lead time", value: leadtimeProm != null ? leadtimeProm + "d" : "—", color: C.blue, sub: "Compra → entregado (Fenicio)", border: C.line }),
+    /*#__PURE__*/React.createElement(KpiBtn, { label: "Tiempo a despacho", value: leadtimeProm != null ? leadtimeProm + "d" : "—", color: C.blue, sub: "Compra → despacho (prom.)", border: C.line }),
     /*#__PURE__*/React.createElement(KpiBtn, { label: "Depo 0 (sin stock)", value: sinStockArr.length, color: "#7C3AED", sub: "Requiere acción manual", tab: "depo0", border: "#DDD6FE" })),
   persistOK === false && /*#__PURE__*/React.createElement("div", { className: "rounded-xl px-4 py-3 text-xs font-medium", style: { background: C.amberS, color: C.amber } }, "⚠ La persistencia no está activa: falta crear la tabla en Supabase, así que los comentarios y el seguimiento NO se guardan entre sesiones. Ejecutá el SQL de sql/operativa_seguimiento.sql en Supabase → SQL Editor."),
   ccDepo9Arr.length > 0 && /*#__PURE__*/React.createElement("div", { className: "rounded-xl px-4 py-3 text-xs font-medium", style: { background: "#FEE2E2", color: "#B91C1C" } }, "⚠ " + ccDepo9Arr.length + " pedido(s) Click & Collect asignados a Depo 9 — según el criterio del WMS no deberían; revisar la derivación de depósito."),
