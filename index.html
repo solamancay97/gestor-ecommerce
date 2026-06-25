@@ -3444,6 +3444,10 @@ function Operativa() {
   const [soloCC, setSoloCC] = useState("todos"); // todos | cc | nocc
   const [ccCol, setCcCol] = useState("");
   const [comentarios, setComentarios] = useState({}); // pedido -> { comentario, accionado } (persistido)
+  const [filtroEstadoFen, setFiltroEstadoFen] = useState("");
+  const [filtroDeposito, setFiltroDeposito] = useState("");
+  const [filtroDiasMin, setFiltroDiasMin] = useState("");
+  const [buscar, setBuscar] = useState("");
   const POR_HOJA = 50;
   const leerFenicio = tienda => e => {
     const file = e && e.target && e.target.files ? e.target.files[0] : null;
@@ -3556,8 +3560,9 @@ function Operativa() {
     const movidoWMS = despachadoWMS || String(estadoWMS).toLowerCase().includes("recib");
     const atrasado = !entregado && !cancelado && dias != null && dias > filtroDias && estadoFen !== "Listo para retirar";
     const critico = !entregado && !cancelado && dias != null && dias > 10;
-    const inconsistente = fenEntregado !== wmsEntregado && !row.sinWMS;
+    // "Validar despacho": Monitor dice despachado pero Fenicio no pasó a entregado tras +2 días hábiles
     const posibleNoDespacho = despachadoWMS && !fenEntregado && (diasDesp != null ? diasDesp > 2 : (dias != null && dias > 2));
+    const inconsistente = posibleNoDespacho;
     const estancado = !row.sinWMS && !entregado && !cancelado && !movidoWMS && dias != null && dias > 2;
     return { ...row, dias, diasDesp, fenEntregado, wmsEntregado, entregado, cancelado, despachadoWMS, atrasado, critico, inconsistente, posibleNoDespacho, estancado };
   };
@@ -3624,9 +3629,12 @@ function Operativa() {
       }
     });
     const res = [];
+    const vistosPed = {};
     rowsA.forEach(r => {
       const pedido = String(r[colNro] || "").trim();
       if (!pedido) return;
+      if (vistosPed[pedido]) return; // un pedido puede venir en varias filas de Fenicio → evitar duplicados
+      vistosPed[pedido] = 1;
       const fecha = r[colFechF] || "";
       const estadoFen = r[colEstF] || "-";
       const importe = r[colImp] || "-";
@@ -3752,12 +3760,30 @@ function Operativa() {
     cuerpo += "Por favor procesar/confirmar/despachar cuanto antes.\n\nGracias.";
     window.location.href = "mailto:" + encodeURIComponent(dest) + "?subject=" + encodeURIComponent(asunto) + "&body=" + encodeURIComponent(cuerpo);
   };
-  const vistaBase = vistaTab === "criticos" ? criticos : vistaTab === "inconsistencias" ? inconsistentes : vistaTab === "nodespacho" ? noDespacho : vistaTab === "estancados" ? estancados : vistaTab === "sinwms" ? sinWMS : vistaTab === "todos" ? (resultado || []) : atrasados;
-  const vistaRows = soloCC === "cc" ? vistaBase.filter(r => r.clickCollect) : soloCC === "nocc" ? vistaBase.filter(r => !r.clickCollect) : vistaBase;
+  // Opciones de filtros (estados de Fenicio y depósitos presentes en el análisis)
+  const estadosFenOpts = resultado ? Array.from(new Set(resultado.map(r => r.estadoFen).filter(Boolean))).sort() : [];
+  const depositosOpts = resultado ? Array.from(new Set(resultado.map(r => r.deposito).filter(d => d && d !== "-"))).sort() : [];
+  const vistaBase = vistaTab === "criticos" ? criticos : vistaTab === "nodespacho" ? noDespacho : vistaTab === "estancados" ? estancados : vistaTab === "sinwms" ? sinWMS : vistaTab === "todos" ? (resultado || []) : atrasados;
+  const buscarT = buscar.trim().toLowerCase();
+  const vistaRows = vistaBase.filter(r =>
+    (soloCC === "cc" ? r.clickCollect : soloCC === "nocc" ? !r.clickCollect : true) &&
+    (!filtroEstadoFen || r.estadoFen === filtroEstadoFen) &&
+    (!filtroDeposito || r.deposito === filtroDeposito) &&
+    (!filtroDiasMin || (r.dias != null && r.dias >= Number(filtroDiasMin))) &&
+    (!buscarT || String(r.pedido).toLowerCase().includes(buscarT) || String(r.deposito).toLowerCase().includes(buscarT) || String(r.estadoFen).toLowerCase().includes(buscarT) || String(r.estadoWMS).toLowerCase().includes(buscarT))
+  );
   const totalPaginas = Math.max(1, Math.ceil(vistaRows.length / POR_HOJA));
   const pageSafe = Math.min(page, totalPaginas - 1);
   const pageRows = vistaRows.slice(pageSafe * POR_HOJA, pageSafe * POR_HOJA + POR_HOJA);
   const Vacio = ({ msg }) => /*#__PURE__*/React.createElement("div", { className: "bg-white rounded-2xl border p-6 text-sm text-center", style: { borderColor: C.line, color: C.green } }, msg);
+  // KPI clickable: actúa como botón que filtra la vista por categoría
+  const KpiBtn = ({ label, value, color, sub, tab, border }) => /*#__PURE__*/React.createElement("button", {
+    onClick: tab ? () => { setVistaTab(tab); setPage(0); } : undefined,
+    className: "bg-white rounded-2xl border p-4 text-left " + (tab ? "cursor-pointer hover:shadow-md transition-shadow" : "cursor-default"),
+    style: { borderColor: tab && vistaTab === tab ? color : (border || C.line), borderWidth: tab && vistaTab === tab ? 2 : 1 }
+  }, /*#__PURE__*/React.createElement("div", { className: "text-xs font-bold uppercase mb-1", style: { color: C.gray } }, label),
+     /*#__PURE__*/React.createElement("div", { className: "text-3xl font-black fraunces", style: { color } }, value),
+     sub && /*#__PURE__*/React.createElement("div", { className: "text-xs mt-0.5", style: { color: C.gray } }, sub));
   const TabBtn = ({
     id,
     label,
@@ -3988,102 +4014,26 @@ function Operativa() {
     }
   }, !rowsA.length || !rowsB.length ? "Carga los dos archivos primero" : "Cruzar archivos")), resultado && /*#__PURE__*/React.createElement("div", {
     className: "space-y-4"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "grid grid-cols-2 sm:grid-cols-4 gap-3"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "bg-white rounded-2xl border p-4",
-    style: {
-      borderColor: C.line
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-xs font-bold uppercase mb-1",
-    style: {
-      color: C.gray
-    }
-  }, "Total pedidos"), /*#__PURE__*/React.createElement("div", {
-    className: "text-3xl font-black fraunces",
-    style: {
-      color: C.blue
-    }
-  }, resultado.length)), /*#__PURE__*/React.createElement("div", {
-    className: "bg-white rounded-2xl border p-4",
-    style: {
-      borderColor: C.redS
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-xs font-bold uppercase mb-1",
-    style: {
-      color: C.gray
-    }
-  }, "Atrasados +", filtroDias, "d hab."), /*#__PURE__*/React.createElement("div", {
-    className: "text-3xl font-black fraunces",
-    style: {
-      color: C.red
-    }
-  }, atrasados.length)), /*#__PURE__*/React.createElement("div", {
-    className: "bg-white rounded-2xl border p-4",
-    style: {
-      borderColor: C.amberS
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-xs font-bold uppercase mb-1",
-    style: {
-      color: C.gray
-    }
-  }, "Estados inconsistentes"), /*#__PURE__*/React.createElement("div", {
-    className: "text-3xl font-black fraunces",
-    style: {
-      color: C.amber
-    }
-  }, inconsistentes.length), /*#__PURE__*/React.createElement("div", {
-    className: "text-xs mt-0.5",
-    style: {
-      color: C.gray
-    }
-  }, "Fenicio distinto al WMS")), /*#__PURE__*/React.createElement("div", {
-    className: "bg-white rounded-2xl border p-4",
-    style: {
-      borderColor: C.greenS
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-xs font-bold uppercase mb-1",
-    style: {
-      color: C.gray
-    }
-  }, "Entregados"), /*#__PURE__*/React.createElement("div", {
-    className: "text-3xl font-black fraunces",
-    style: {
-      color: C.green
-    }
-  }, resultado.filter(r => r.entregado).length)),
-  /*#__PURE__*/React.createElement("div", { className: "bg-white rounded-2xl border p-4", style: { borderColor: C.greenS } },
-    /*#__PURE__*/React.createElement("div", { className: "text-xs font-bold uppercase mb-1", style: { color: C.gray } }, "Tasa cumplimiento"),
-    /*#__PURE__*/React.createElement("div", { className: "text-3xl font-black fraunces", style: { color: tasaCumpl >= 90 ? C.green : tasaCumpl >= 70 ? C.amber : C.red } }, tasaCumpl + "%"),
-    /*#__PURE__*/React.createElement("div", { className: "text-xs mt-0.5", style: { color: C.gray } }, entregadosArr.length + " de " + resultado.length)),
-  /*#__PURE__*/React.createElement("div", { className: "bg-white rounded-2xl border p-4", style: { borderColor: C.redS } },
-    /*#__PURE__*/React.createElement("div", { className: "text-xs font-bold uppercase mb-1", style: { color: C.gray } }, "Críticos +10d háb."),
-    /*#__PURE__*/React.createElement("div", { className: "text-3xl font-black fraunces", style: { color: C.red } }, criticos.length)),
-  /*#__PURE__*/React.createElement("div", { className: "bg-white rounded-2xl border p-4", style: { borderColor: "#FCD34D" } },
-    /*#__PURE__*/React.createElement("div", { className: "text-xs font-bold uppercase mb-1", style: { color: C.gray } }, "Posible no-despacho"),
-    /*#__PURE__*/React.createElement("div", { className: "text-3xl font-black fraunces", style: { color: "#B45309" } }, noDespacho.length),
-    /*#__PURE__*/React.createElement("div", { className: "text-xs mt-0.5", style: { color: C.gray } }, "Despachado WMS, sin entregar")),
-  /*#__PURE__*/React.createElement("div", { className: "bg-white rounded-2xl border p-4", style: { borderColor: C.amberS } },
-    /*#__PURE__*/React.createElement("div", { className: "text-xs font-bold uppercase mb-1", style: { color: C.gray } }, "Estancados >2d"),
-    /*#__PURE__*/React.createElement("div", { className: "text-3xl font-black fraunces", style: { color: C.amber } }, estancados.length),
-    /*#__PURE__*/React.createElement("div", { className: "text-xs mt-0.5", style: { color: C.gray } }, "Sin avanzar en WMS"))), inconsistentes.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "rounded-xl px-4 py-3 text-xs font-medium",
-    style: {
-      background: C.amberS,
-      color: C.amber
-    }
-  }, "Hay ", inconsistentes.length, " pedidos donde Fenicio y el WMS no coinciden en si fue entregado o no. Esos necesitan validacion manual."), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-3" },
+    /*#__PURE__*/React.createElement(KpiBtn, { label: "Total pedidos", value: resultado.length, color: C.blue, tab: "todos" }),
+    /*#__PURE__*/React.createElement(KpiBtn, { label: "Atrasados +" + filtroDias + "d háb.", value: atrasados.length, color: C.red, tab: "atrasados", border: C.redS }),
+    /*#__PURE__*/React.createElement(KpiBtn, { label: "Críticos +10d háb.", value: criticos.length, color: "#B91C1C", tab: "criticos", border: C.redS }),
+    /*#__PURE__*/React.createElement(KpiBtn, { label: "Validar despacho", value: noDespacho.length, color: "#B45309", sub: "Despachado WMS, sin entregar +2d", tab: "nodespacho", border: "#FCD34D" }),
+    /*#__PURE__*/React.createElement(KpiBtn, { label: "Estancados >2d", value: estancados.length, color: C.amber, sub: "Sin avanzar en WMS", tab: "estancados", border: C.amberS }),
+    /*#__PURE__*/React.createElement(KpiBtn, { label: "Entregados", value: entregadosArr.length, color: C.green, border: C.greenS }),
+    /*#__PURE__*/React.createElement(KpiBtn, { label: "Tasa cumplimiento", value: tasaCumpl + "%", color: tasaCumpl >= 90 ? C.green : tasaCumpl >= 70 ? C.amber : C.red, sub: entregadosArr.length + " de " + resultado.length, border: C.greenS })),
+  /*#__PURE__*/React.createElement("div", { className: "bg-white rounded-2xl border p-3 flex flex-wrap gap-2 items-end", style: { borderColor: C.line } },
+    /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", { className: "text-[10px] font-bold uppercase block mb-1", style: { color: C.gray } }, "Buscar pedido"), /*#__PURE__*/React.createElement("input", { type: "text", value: buscar, onChange: e => { setBuscar(e.target.value); setPage(0); }, placeholder: "N° pedido…", className: "px-2 py-1.5 rounded-lg border text-xs", style: { borderColor: C.line } })),
+    /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", { className: "text-[10px] font-bold uppercase block mb-1", style: { color: C.gray } }, "Estado Fenicio"), /*#__PURE__*/React.createElement("select", { value: filtroEstadoFen, onChange: e => { setFiltroEstadoFen(e.target.value); setPage(0); }, className: "px-2 py-1.5 rounded-lg border text-xs bg-white", style: { borderColor: C.line, maxWidth: 220 } }, /*#__PURE__*/React.createElement("option", { value: "" }, "Todos"), estadosFenOpts.map(s => /*#__PURE__*/React.createElement("option", { key: s, value: s }, s)))),
+    /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", { className: "text-[10px] font-bold uppercase block mb-1", style: { color: C.gray } }, "Depósito"), /*#__PURE__*/React.createElement("select", { value: filtroDeposito, onChange: e => { setFiltroDeposito(e.target.value); setPage(0); }, className: "px-2 py-1.5 rounded-lg border text-xs bg-white", style: { borderColor: C.line, maxWidth: 200 } }, /*#__PURE__*/React.createElement("option", { value: "" }, "Todos"), depositosOpts.map(s => /*#__PURE__*/React.createElement("option", { key: s, value: s }, s)))),
+    /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", { className: "text-[10px] font-bold uppercase block mb-1", style: { color: C.gray } }, "Días ≥"), /*#__PURE__*/React.createElement("input", { type: "number", value: filtroDiasMin, min: "0", onChange: e => { setFiltroDiasMin(e.target.value); setPage(0); }, placeholder: "0", className: "px-2 py-1.5 rounded-lg border text-xs", style: { borderColor: C.line, width: 72 } })),
+    (filtroEstadoFen || filtroDeposito || filtroDiasMin || buscar) ? /*#__PURE__*/React.createElement("button", { onClick: () => { setFiltroEstadoFen(""); setFiltroDeposito(""); setFiltroDiasMin(""); setBuscar(""); setPage(0); }, className: "text-xs font-bold px-3 py-1.5 rounded-lg", style: { background: "#EEF1F5", color: C.gray } }, "Limpiar") : null), /*#__PURE__*/React.createElement("div", {
     className: "flex gap-2 flex-wrap items-center justify-between"
   }, /*#__PURE__*/React.createElement("div", { className: "flex gap-2 flex-wrap" },
     /*#__PURE__*/React.createElement(TabBtn, { id: "atrasados", label: "Atrasados", count: atrasados.length, color: C.red }),
     /*#__PURE__*/React.createElement(TabBtn, { id: "criticos", label: "Críticos", count: criticos.length, color: "#B91C1C" }),
-    /*#__PURE__*/React.createElement(TabBtn, { id: "nodespacho", label: "No-despacho", count: noDespacho.length, color: "#B45309" }),
+    /*#__PURE__*/React.createElement(TabBtn, { id: "nodespacho", label: "Validar despacho", count: noDespacho.length, color: "#B45309" }),
     /*#__PURE__*/React.createElement(TabBtn, { id: "estancados", label: "Estancados", count: estancados.length, color: C.amber }),
-    /*#__PURE__*/React.createElement(TabBtn, { id: "inconsistencias", label: "Inconsistentes", count: inconsistentes.length, color: C.amber }),
     sinWMS.length > 0 && /*#__PURE__*/React.createElement(TabBtn, { id: "sinwms", label: "Sin WMS", count: sinWMS.length, color: "#7C3AED" }),
     /*#__PURE__*/React.createElement(TabBtn, { id: "todos", label: "Todos", count: (resultado || []).length, color: C.blue })
   ), /*#__PURE__*/React.createElement("div", { className: "flex gap-2 shrink-0 items-center" },
