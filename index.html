@@ -3023,8 +3023,13 @@ function Metas({
     const pedDuplicados = []; // en export por línea, un pedido con varias filas es normal; no es duplicado
 
     const hoy = new Date().toISOString().slice(0, 10);
-    const reDespachado = /entregad|recibid|despachad|tr[aá]nsito|camino/i;
-    const reProceso = /preparand|items|confirmad|clasificad|pendiente/i;
+    // Criterio de facturación automática: SOLO se espera factura si el pedido ya fue procesado,
+    // es decir si llegó al menos a "Orden liberada" (o estados posteriores: pronto para despacho,
+    // despachado, en tránsito, recibido en tienda, listo para retirar, entregado). Antes de eso
+    // (pedido recibido / preparando / items pedidos / confirmados) el pedido NO se procesó, así que
+    // todavía no se factura y no debe contar como "sin factura".
+    const reLiberado = /clasificad|orden\s*liberad|liberad|pronto.*despach|despachad|tr[aá]nsito|camino|recibid[oa]?\s*(en\s*)?tienda|listo.*retir|entregad/i;
+    const reDespEntr = /despachad|tr[aá]nsito|camino|recibid[oa]?\s*(en\s*)?tienda|entregad/i;
     const grupos = { facturado: [], facturaDup: [], pendienteOK: [], pcnManual: [], revisar: [], cancelado: [] };
 
     Object.values(fenPed).forEach(p => {
@@ -3042,10 +3047,12 @@ function Metas({
       }
       // Sin factura:
       if (pcn) { grupos.pcnManual.push({ ...base, razon: "Prenda personalizada (PCN) — facturar/forzar manualmente" }); return; }
-      if (reDespachado.test(estadoFen) || reDespachado.test(estadoWMS)) { grupos.revisar.push({ ...base, razon: "Despachado/entregado SIN factura ⚠️" }); return; }
-      if (fecha >= hoy) { grupos.pendienteOK.push({ ...base, razon: "Pedido de hoy" }); return; }
-      if (reProceso.test(estadoFen) || reProceso.test(estadoWMS)) { grupos.pendienteOK.push({ ...base, razon: "En proceso en depósito" }); return; }
-      grupos.revisar.push({ ...base, razon: "Sin factura — verificar" });
+      // Solo se espera factura si el pedido fue procesado (orden liberada o más). Si no, no se factura todavía.
+      const liberado = reLiberado.test(estadoFen) || reLiberado.test(estadoWMS);
+      if (!liberado) { grupos.pendienteOK.push({ ...base, razon: "Sin orden liberada — todavía no se procesó (no se factura)" }); return; }
+      if (reDespEntr.test(estadoFen) || reDespEntr.test(estadoWMS)) { grupos.revisar.push({ ...base, razon: "Despachado/entregado SIN factura ⚠️" }); return; }
+      if (fecha >= hoy) { grupos.pendienteOK.push({ ...base, razon: "Orden liberada hoy — a facturar" }); return; }
+      grupos.revisar.push({ ...base, razon: "Orden liberada sin factura — verificar" });
     });
 
     // Pedidos PCN presentes en el WMS pero ausentes del reporte de Fenicio
