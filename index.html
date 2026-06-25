@@ -3495,12 +3495,15 @@ function Operativa() {
     const cancelado = String(estadoFen).toLowerCase().includes("cancel") || String(estadoWMS).toLowerCase().includes("cancel");
     const despachadoWMS = String(estadoWMS).toLowerCase().includes("despach");
     const movidoWMS = despachadoWMS || String(estadoWMS).toLowerCase().includes("recib");
-    const atrasado = !entregado && !cancelado && dias != null && dias > filtroDias && estadoFen !== "Listo para retirar";
-    const critico = !entregado && !cancelado && dias != null && dias > 10;
+    // "Listo para retirar" / "Pedido recibido en tienda": el pedido ya está pronto en el pickup
+    // esperando al cliente. No hay nada que accionar → NO es atrasado/crítico/estancado.
+    const listoRetiro = /listo.*retir/i.test(estadoFen) || /listo.*retir/i.test(estadoWMS) || /recibid[oa]?\s*(en\s*)?tienda/i.test(estadoWMS);
+    const atrasado = !entregado && !cancelado && !listoRetiro && dias != null && dias > filtroDias;
+    const critico = !entregado && !cancelado && !listoRetiro && dias != null && dias > 10;
     // "Validar despacho": Monitor dice despachado pero Fenicio no pasó a entregado tras +2 días hábiles
     const posibleNoDespacho = despachadoWMS && !fenEntregado && (diasDesp != null ? diasDesp > 2 : (dias != null && dias > 2));
     const inconsistente = posibleNoDespacho;
-    const estancado = !row.sinWMS && !entregado && !cancelado && !movidoWMS && dias != null && dias > 2;
+    const estancado = !row.sinWMS && !entregado && !cancelado && !listoRetiro && !movidoWMS && dias != null && dias > 2;
     // Forma de entrega: Click & Collect ≠ Pickup ≠ Envío a domicilio
     const fe = String(row.formaEntrega || "").toLowerCase();
     const clickCollect = fe.includes("click") || fe.includes("collect");
@@ -3514,7 +3517,7 @@ function Operativa() {
     // Tiempo de entrega: días corridos compra → entrega real (fecha de entrega de Fenicio). Mide la experiencia del cliente.
     let leadtimeEntrega = null;
     if (row.fechaEntrega && String(row.fechaEntrega).trim() && row.fechaEntrega !== "-") { const a = parseFecha(row.fecha), b = parseFecha(row.fechaEntrega); if (a && b && b >= a) leadtimeEntrega = Math.round((b - a) / 86400000); }
-    return { ...row, dias, diasDesp, fenEntregado, wmsEntregado, entregado, cancelado, despachadoWMS, atrasado, critico, inconsistente, posibleNoDespacho, estancado, clickCollect, pickup, sinStock, ccDepo9, leadtime, leadtimeEntrega };
+    return { ...row, dias, diasDesp, fenEntregado, wmsEntregado, entregado, cancelado, despachadoWMS, atrasado, critico, inconsistente, posibleNoDespacho, estancado, listoRetiro, clickCollect, pickup, sinStock, ccDepo9, leadtime, leadtimeEntrega };
   };
   // Carga el seguimiento ya analizado (con comentarios) al entrar a la pestaña, para que el análisis quede fijo.
   const cargarSeguimiento = useCallback(async () => {
