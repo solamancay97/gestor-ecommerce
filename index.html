@@ -2248,6 +2248,12 @@ function ResultadoCruce({
     s: C.greenS,
     arr: grupos.facturado
   }, {
+    id: "canceladoFactura",
+    l: "Cancelado c/factura",
+    c: "#BE123C",
+    s: "#FFE4E6",
+    arr: grupos.canceladoConFactura || []
+  }, {
     id: "cancelado",
     l: "Cancelados",
     c: C.gray,
@@ -2255,7 +2261,7 @@ function ResultadoCruce({
     arr: grupos.cancelado
   }];
   const pcnArr = grupos.pcnManual || [];
-  const [tabAct, setTabAct] = useState(grupos.revisar.length > 0 ? "revisar" : (grupos.facturaDup || []).length > 0 ? "facturaDup" : pcnArr.length > 0 ? "pcnManual" : "facturado");
+  const [tabAct, setTabAct] = useState(grupos.revisar.length > 0 ? "revisar" : (grupos.canceladoConFactura || []).length > 0 ? "canceladoFactura" : (grupos.facturaDup || []).length > 0 ? "facturaDup" : pcnArr.length > 0 ? "pcnManual" : "facturado");
   const tabActual = TABS.find(t => t.id === tabAct) || TABS[0];
   const POR_PAGINA = 25;
   const [pagina, setPagina] = useState(0);
@@ -2281,7 +2287,7 @@ function ResultadoCruce({
     pcnArr.length > 0 && grupos.pendienteOK.length > 0 && " · ",
     grupos.pendienteOK.length > 0 && /*#__PURE__*/React.createElement("span", null, grupos.pendienteOK.length, " en proceso o recientes (OK por ahora)")
   )), /*#__PURE__*/React.createElement("div", {
-    className: "grid grid-cols-3 sm:grid-cols-6 gap-2"
+    className: "grid grid-cols-3 sm:grid-cols-4 xl:grid-cols-7 gap-2"
   }, TABS.map(t => /*#__PURE__*/React.createElement("button", {
     key: t.id,
     onClick: () => irTab(t.id),
@@ -2303,7 +2309,10 @@ function ResultadoCruce({
       background: C.redS,
       color: C.red
     }
-  }, "⚠️ ", grupos.revisar.length, " pedidos despachados/entregados sin factura — requieren acción urgente."), (grupos.facturaDup || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "⚠️ ", grupos.revisar.length, " pedidos despachados/entregados sin factura — requieren acción urgente."), (grupos.canceladoConFactura || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "rounded-xl px-4 py-2.5 text-xs font-bold",
+    style: { background: "#FFE4E6", color: "#BE123C" }
+  }, "⚠️ ", grupos.canceladoConFactura.length, " pedido(s) CANCELADOS que tienen factura en el BAS — hay que anular la factura manualmente."), (grupos.facturaDup || []).length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "rounded-xl px-4 py-2.5 text-xs font-bold",
     style: {
       background: "#F3F0FF",
@@ -3104,7 +3113,7 @@ function Metas({
     // todavía no se factura y no debe contar como "sin factura".
     const reLiberado = /clasificad|orden\s*liberad|liberad|pronto.*despach|despachad|tr[aá]nsito|camino|recibid[oa]?\s*(en\s*)?tienda|listo.*retir|entregad/i;
     const reDespEntr = /despachad|tr[aá]nsito|camino|recibid[oa]?\s*(en\s*)?tienda|entregad/i;
-    const grupos = { facturado: [], facturaDup: [], pendienteOK: [], pcnManual: [], revisar: [], cancelado: [] };
+    const grupos = { facturado: [], facturaDup: [], pendienteOK: [], pcnManual: [], revisar: [], cancelado: [], canceladoConFactura: [] };
 
     Object.values(fenPed).forEach(p => {
       const { nro, fecha, estadoFen, estadoPago, importe, pcn, skusPcn } = p;
@@ -3113,7 +3122,12 @@ function Metas({
       const tieneF = nInvoices(nro) > 0;
       const esDupF = netFacturas(nro) > 1;
       const base = { nro, fecha, estadoFen, estadoPago, estadoWMS, importe, pcn, skusPcn: (skusPcn||[]).join(", ") };
-      if (/cancelad/i.test(estadoWMS) || /cancelad/i.test(estadoFen) || /cancelad/i.test(estadoPago)) { grupos.cancelado.push(base); return; }
+      if (/cancelad/i.test(estadoWMS) || /cancelad/i.test(estadoFen) || /cancelad/i.test(estadoPago)) {
+        // Un pedido cancelado NO debería tener factura. Si la tiene, hay que anularla a mano → avisar.
+        if (tieneF) grupos.canceladoConFactura.push({ ...base, nFact: nInvoices(nro), razon: "Cancelado CON factura — anular la factura manualmente ⚠️" });
+        else grupos.cancelado.push(base);
+        return;
+      }
       if (tieneF) {
         if (esDupF) grupos.facturaDup.push({ ...base, nFact: nInvoices(nro), nNCs: ncsXPed[nro] || 0 });
         else grupos.facturado.push(base);
@@ -3136,7 +3150,11 @@ function Metas({
       const tieneF = nInvoices(v) > 0;
       const estadoWMS = info.estadoEnc || info.estadoEco || "—";
       const base = { nro: v, fecha: info.fecha, estadoFen: "— (sólo en WMS)", estadoPago: "", estadoWMS, importe: info.importe, pcn: true, skusPcn: info.arts.join(", ") };
-      if (/cancelad/i.test(estadoWMS) || /cancelad/i.test(info.estadoEco)) { grupos.cancelado.push(base); return; }
+      if (/cancelad/i.test(estadoWMS) || /cancelad/i.test(info.estadoEco)) {
+        if (tieneF) grupos.canceladoConFactura.push({ ...base, nFact: nInvoices(v), razon: "Cancelado CON factura — anular la factura manualmente ⚠️" });
+        else grupos.cancelado.push(base);
+        return;
+      }
       if (tieneF) { grupos.facturado.push(base); return; }
       grupos.pcnManual.push({ ...base, razon: `Prenda personalizada (PCN) sin factura — forzar manualmente${info.arts.length ? " · " + info.arts.length + " art." : ""}` });
     });
@@ -3563,7 +3581,10 @@ function Operativa() {
     const clickCollect = fe.includes("click") || fe.includes("collect");
     const pickup = !clickCollect && fe.includes("pickup");
     const depo = String(row.deposito || "").replace(/\.0+$/, "").trim();
-    const sinStock = depo === "0" && !entregado && !cancelado;  // Depo 0 = sin stock → acción manual. Si ya se entregó/canceló, se gestionó.
+    // Depo 0 = el WMS no encontró stock → acción manual, PERO solo si el pedido sigue "vivo":
+    // si ya se entregó, canceló, despachó, está en tránsito/recibido o es PCN (personalizado), se gestionó.
+    const movidoODespachado = movidoWMS || listoRetiro || /despach|tr[aá]nsito|camino|recib/i.test(estadoFen) || /tr[aá]nsito|camino/i.test(estadoWMS);
+    const sinStock = depo === "0" && !entregado && !cancelado && !movidoODespachado && !row.pcn;
     const ccDepo9 = clickCollect && depo === "9";  // C&C no debería pedirse a depo 9
     // Tiempo a despacho: días corridos compra → "Fecha despacho" del WMS (dato real; la entrega no se registra)
     let leadtime = null;
@@ -3651,6 +3672,11 @@ function Operativa() {
     const colForma = findCol(sW, [/forma.*entr/i, /m[eé]todo.*entr/i, /tipo.*entr/i, /modalidad/i]) || "Forma entrega";
     const colFechEntrega = findCol(sW, [/fecha.*entrega.*real/i, /fecha.*entrega/i]) || "Fecha entrega real";
     setCcCol(colForma || "");
+    // PCN (prendas personalizadas): se detectan por el artículo del WMS con prefijo "PCN".
+    // No se cuentan como Depo 0 (su falta de stock es normal, se hacen a pedido).
+    const colArt = findCol(sW, [/art[ií]culo/i, /^sku$/i, /c[oó]d.*art/i]) || "Articulo";
+    const pcnVentas = new Set();
+    rowsB.forEach(r => { if (String(r[colArt] || "").toUpperCase().startsWith("PCN")) { const k = String(r[colVenta] || "").trim(); if (k) pcnVentas.add(k); } });
 
     const wmsF = filtroTienda === "todas" ? rowsB : rowsB.filter(r => String(r[colCanal] || "").toLowerCase().includes(filtroTienda.toLowerCase()));
     const wmsMap = {};
@@ -3696,6 +3722,7 @@ function Operativa() {
         formaEntrega,
         fechaEntrega,
         importe,
+        pcn: pcnVentas.has(pedido),
         sinWMS: !wms
       }));
     });
