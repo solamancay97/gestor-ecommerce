@@ -2746,9 +2746,26 @@ function Metas({
     });
     setMetas(d || []);
   }, []);
+  // Auto-cargar el ÚLTIMO análisis guardado (resumen del BAS + pedidos del cruce), para verlo
+  // al entrar sin tener que volver a subir los archivos (se comparte entre personas).
+  const cargarSnapshot = useCallback(async () => {
+    try {
+      const { data, error } = await supa.from("analisis_snapshot").select("*").eq("id", "ultimo").maybeSingle();
+      if (error || !data) return; // tabla no creada todavía o sin snapshot
+      if (data.resumen) setResumenBAS(data.resumen);
+      if (data.pendientes) setPendientes(data.pendientes);
+      if (data.mes) setMes(data.mes);
+    } catch (_) {}
+  }, []);
+  // Guarda (upsert) el snapshot del último análisis. Solo se pasan los campos que cambian,
+  // así guardar el cruce no pisa el resumen del BAS ni al revés.
+  const guardarSnapshot = async campos => {
+    try { await supa.from("analisis_snapshot").upsert({ id: "ultimo", actualizado: new Date().toISOString(), ...campos }, { onConflict: "id" }); } catch (_) {}
+  };
   useEffect(() => {
     cargarMetas();
-  }, [cargarMetas]);
+    cargarSnapshot();
+  }, [cargarMetas, cargarSnapshot]);
   // metasDeMes: real viene del BAS cargado (neto = FABs-NCDs) cuando está disponible,
   // y cae a Supabase si no hay BAS en esta sesión.
   const metasDeMes = TIENDAS_META.map(t => {
@@ -3017,10 +3034,12 @@ function Metas({
         porMesNeto[m][t] = Math.max(0, fab - (ncdPorMesTienda[m]?.[t] || 0));
       });
     });
-    setResumenBAS({porMes, porMesNeto, ncdPorMes, ncdPorMesTienda, cantPedMes, cantFacMes, meses, fabTotal:fab.length, ncdTotal:ncd.length, sucSinMapa:Array.from(sucSinMapa), colImporte:rowsBAS._colImporte, colIva:rowsBAS._colIva, basCols, primeraFAB});
+    const resumen = {porMes, porMesNeto, ncdPorMes, ncdPorMesTienda, cantPedMes, cantFacMes, meses, fabTotal:fab.length, ncdTotal:ncd.length, sucSinMapa:Array.from(sucSinMapa), colImporte:rowsBAS._colImporte, colIva:rowsBAS._colIva, basCols, primeraFAB};
+    setResumenBAS(resumen);
     // Posicionar la vista de metas en el mes más reciente del archivo
     const mesReciente = meses[meses.length-1];
     if (mesReciente && mes !== mesReciente) setMes(mesReciente);
+    guardarSnapshot({ mes: mesReciente || mes, resumen });
     // Guardar en Supabase: una fila por (mes, tienda)
     if (esAdmin && supa) {
       try {
@@ -3160,7 +3179,9 @@ function Metas({
     });
 
     const totalPedidos = Object.keys(fenPed).length + Object.keys(pcnXVenta).filter(v => !fenPed[v]).length;
-    setPendientes({ grupos, factDuplicadas, pedDuplicados, totalPedidos });
+    const pend = { grupos, factDuplicadas, pedDuplicados, totalPedidos };
+    setPendientes(pend);
+    guardarSnapshot({ pendientes: pend });
     if (esAdmin) {
       const pendCount = grupos.revisar.length + grupos.pcnManual.length + grupos.facturaDup.length;
       const { data: kpisG } = await supa.from("kpis_globales").select("id,nombre");
