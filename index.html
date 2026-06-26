@@ -1072,6 +1072,42 @@ function Resumen({
   const vencidas = tareas.filter(vencida).length;
   const hechas = tareas.filter(t => t.estado === "hecho").length;
   const prog = objetivos.length ? Math.round(objetivos.reduce((a, o) => a + o.progreso, 0) / objetivos.length) : 0;
+  // ── Datos transversales para el resumen: facturación (metas_mensuales) y operativa (seguimiento) ──
+  const fmtUSD = n => "$" + Math.round(n || 0).toLocaleString("es-UY");
+  const MESNOM = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+  const fmtMesCorto = m => MESNOM[(+String(m).split("-")[1]) - 1] || "";
+  const [metasM, setMetasM] = useState([]);
+  const [seguiR, setSeguiR] = useState([]);
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      try { const { data: mm } = await supa.from("metas_mensuales").select("*"); if (vivo && mm) setMetasM(mm); } catch (_) {}
+      try {
+        let all = [], desde = 0;
+        for (;;) { const { data: pg, error } = await supa.from("operativa_seguimiento").select("pedido,dias,estado_fen,estado_wms,deposito").range(desde, desde + 999); if (error || !pg || !pg.length) break; all = all.concat(pg); if (pg.length < 1000) break; desde += 1000; }
+        if (vivo) setSeguiR(all);
+      } catch (_) {}
+    })();
+    return () => { vivo = false; };
+  }, []);
+  const mesActual = new Date().toISOString().slice(0, 7);
+  const anioActual = String(new Date().getFullYear());
+  const sumReal = arr => arr.reduce((a, m) => a + Number(m.real || 0), 0);
+  const sumMeta = arr => arr.reduce((a, m) => a + Number(m.meta || 0), 0);
+  const realMes = sumReal(metasM.filter(m => m.mes === mesActual));
+  const metaMes = sumMeta(metasM.filter(m => m.mes === mesActual));
+  const pctMes = metaMes > 0 ? Math.round(realMes / metaMes * 100) : null;
+  const colMes = pctMes == null ? C.gray : pctMes >= 100 ? C.green : pctMes >= 70 ? C.amber : C.red;
+  const OBJ_ANUAL = 100000000;
+  const realAnio = sumReal(metasM.filter(m => String(m.mes || "").startsWith(anioActual)));
+  const pctAnio = Math.round(realAnio / OBJ_ANUAL * 100);
+  const chartData = Array.from({ length: 12 }, (_, i) => { const m = anioActual + "-" + String(i + 1).padStart(2, "0"); return { m, real: sumReal(metasM.filter(x => x.mes === m)), meta: sumMeta(metasM.filter(x => x.mes === m)) }; });
+  const maxChart = Math.max(1, ...chartData.map(c => Math.max(c.real, c.meta)));
+  const esEnt = r => /entregad/i.test(String(r.estado_fen || "") + " " + String(r.estado_wms || ""));
+  const esCanc = r => /cancel/i.test(String(r.estado_fen || "") + " " + String(r.estado_wms || ""));
+  const activosOp = seguiR.filter(r => !esEnt(r) && !esCanc(r));
+  const atrasadosN = activosOp.filter(r => Number(r.dias) > 3).length;
+  const depo0N = activosOp.filter(r => String(r.deposito || "").replace(/\.0+$/, "").trim() === "0").length;
   const [editKpi, setEditKpi] = useState(null);
   const [draftKpi, setDraftKpi] = useState("");
   const updKpiG = async (k, val) => {
@@ -1127,29 +1163,33 @@ function Resumen({
     };
   };
   const statsBase = [{
-    l: "Tareas abiertas",
-    v: abiertas,
-    ic: Ic.clock,
+    l: "Facturación del mes",
+    v: fmtUSD(realMes),
+    sub: pctMes != null ? pctMes + "% de " + fmtUSD(metaMes) : "Meta sin definir",
+    ic: Ic.ops,
+    c: colMes,
+    s: C.greenS
+  }, {
+    l: "Acumulado " + anioActual,
+    v: fmtUSD(realAnio),
+    sub: pctAnio + "% del objetivo anual",
+    ic: Ic.trend,
     c: C.blue,
     s: C.soft
   }, {
-    l: "Vencidas",
-    v: vencidas,
+    l: "Pedidos atrasados",
+    v: seguiR.length ? String(atrasadosN) : "—",
+    sub: "Operativa · +3 días háb.",
     ic: Ic.alert,
-    c: C.red,
+    c: atrasadosN > 0 ? C.red : C.green,
     s: C.redS
   }, {
-    l: "Completadas",
-    v: hechas,
-    ic: Ic.ok,
-    c: C.green,
-    s: C.greenS
-  }, {
-    l: "Avance objetivos",
-    v: `${prog}%`,
-    ic: Ic.trend,
-    c: C.amber,
-    s: C.amberS
+    l: "Depo 0 (sin stock)",
+    v: seguiR.length ? String(depo0N) : "—",
+    sub: "Sin entregar · acción manual",
+    ic: Ic.alert,
+    c: depo0N > 0 ? "#7C3AED" : C.green,
+    s: "#EDE9FE"
   }];
   return /*#__PURE__*/React.createElement("div", {
     className: "space-y-8"
@@ -1175,11 +1215,18 @@ function Resumen({
       color: C.gray
     }
   }, s.l)), /*#__PURE__*/React.createElement("div", {
-    className: "text-3xl font-black tabular-nums",
+    className: "text-2xl font-black tabular-nums fraunces",
     style: {
       color: s.c
     }
-  }, s.v)))), /*#__PURE__*/React.createElement("section", null, /*#__PURE__*/React.createElement(Title, {
+  }, s.v), s.sub && /*#__PURE__*/React.createElement("div", { className: "text-[11px] mt-1.5 font-medium", style: { color: C.gray } }, s.sub)))), /*#__PURE__*/React.createElement("section", null, /*#__PURE__*/React.createElement(Title, {
+    eyebrow: "Análisis", title: "Facturación mensual " + anioActual
+  }), /*#__PURE__*/React.createElement("div", { className: "bg-white rounded-2xl border p-4", style: { borderColor: C.line } }, /*#__PURE__*/React.createElement("div", { className: "flex items-end gap-1.5", style: { height: 170 } }, chartData.map(c => {
+    const hPct = Math.round(c.real / maxChart * 100);
+    const metaPct = c.meta > 0 ? Math.round(Math.min(c.meta, maxChart) / maxChart * 100) : 0;
+    const esActual = c.m === mesActual;
+    return /*#__PURE__*/React.createElement("div", { key: c.m, className: "flex-1 flex flex-col items-center justify-end h-full", title: fmtMesCorto(c.m) + ": " + fmtUSD(c.real) + (c.meta > 0 ? " · meta " + fmtUSD(c.meta) : "") }, /*#__PURE__*/React.createElement("div", { className: "w-full relative flex items-end justify-center", style: { flex: 1, minHeight: 0 } }, c.meta > 0 && /*#__PURE__*/React.createElement("div", { style: { position: "absolute", left: 2, right: 2, bottom: metaPct + "%", borderTop: "2px dashed " + C.gray, opacity: 0.45 } }), /*#__PURE__*/React.createElement("div", { className: "rounded-t-md", style: { width: "72%", height: hPct + "%", minHeight: c.real > 0 ? 3 : 0, background: esActual ? C.blue : C.soft, border: esActual ? "none" : "1px solid " + C.line } })), /*#__PURE__*/React.createElement("div", { className: "text-[10px] mt-1 shrink-0", style: { color: esActual ? C.blue : C.gray, fontWeight: esActual ? 700 : 400 } }, fmtMesCorto(c.m)));
+  })), /*#__PURE__*/React.createElement("div", { className: "text-[10px] mt-3", style: { color: C.gray } }, "Barras = facturación neta real · línea punteada = meta del mes"))), /*#__PURE__*/React.createElement("section", null, /*#__PURE__*/React.createElement(Title, {
     eyebrow: "Indicadores clave",
     title: "Estado operativo",
     right: esAdmin && /*#__PURE__*/React.createElement("button", {
@@ -3379,6 +3426,7 @@ function Operativa() {
   const [filtroDiasMin, setFiltroDiasMin] = useState("");
   const [buscar, setBuscar] = useState("");
   const [calMes, setCalMes] = useState("");
+  const [filtroDia, setFiltroDia] = useState(""); // día (YYYY-MM-DD) elegido en el calendario para filtrar la tabla
   const POR_HOJA = 50;
   const leerFenicio = tienda => e => {
     const file = e && e.target && e.target.files ? e.target.files[0] : null;
@@ -3515,7 +3563,7 @@ function Operativa() {
     const clickCollect = fe.includes("click") || fe.includes("collect");
     const pickup = !clickCollect && fe.includes("pickup");
     const depo = String(row.deposito || "").replace(/\.0+$/, "").trim();
-    const sinStock = depo === "0";                 // Depo 0 = el WMS no encontró stock → acción manual
+    const sinStock = depo === "0" && !entregado && !cancelado;  // Depo 0 = sin stock → acción manual. Si ya se entregó/canceló, se gestionó.
     const ccDepo9 = clickCollect && depo === "9";  // C&C no debería pedirse a depo 9
     // Tiempo a despacho: días corridos compra → "Fecha despacho" del WMS (dato real; la entrega no se registra)
     let leadtime = null;
@@ -3770,19 +3818,21 @@ function Operativa() {
     } catch (e) { alert("Error al exportar: " + e.message); }
   };
   // Alerta por mail (mailto pre-armado) para empujar a una tienda
-  const MAILS_TIENDA = { "TimeOut": "", "Tienda Nacional": "", "Classico": "" };
+  // Mails por DEPÓSITO (no por tienda): así la alerta llega a quién tiene que accionar el pedido.
+  const MAILS_DEPO = {};
   const alertarTienda = (rows, etiqueta) => {
     if (!rows || !rows.length) { alert("No hay pedidos para alertar en esta vista."); return; }
-    const porTienda = {};
-    rows.forEach(r => { (porTienda[r.tienda] = porTienda[r.tienda] || []).push(r); });
-    const tiendasAfectadas = Object.keys(porTienda);
-    const dest = tiendasAfectadas.map(t => MAILS_TIENDA[t]).filter(Boolean).join(",");
+    const porDepo = {};
+    rows.forEach(r => { const d = String(r.deposito || "").trim() || "(sin depósito)"; (porDepo[d] = porDepo[d] || []).push(r); });
+    // Ordenar depósitos por cantidad de pedidos (los más cargados primero)
+    const depos = Object.keys(porDepo).sort((a, b) => porDepo[b].length - porDepo[a].length);
+    const dest = depos.map(d => MAILS_DEPO[d]).filter(Boolean).join(",");
     const asunto = "[Gestor] " + etiqueta + " — " + rows.length + " pedido(s) requieren acción";
-    let cuerpo = "Hola,\n\nDetectamos los siguientes pedidos que necesitan acción (" + etiqueta + "):\n\n";
-    tiendasAfectadas.forEach(t => {
-      cuerpo += "— " + t + " (" + porTienda[t].length + "):\n";
-      porTienda[t].slice(0, 50).forEach(r => {
-        cuerpo += "   • Pedido " + r.pedido + " | Fenicio: " + r.estadoFen + " | WMS: " + r.estadoWMS + " | " + (r.dias != null ? r.dias + " días háb." : "") + "\n";
+    let cuerpo = "Hola,\n\nDetectamos los siguientes pedidos que necesitan acción (" + etiqueta + "), organizados por DEPÓSITO:\n\n";
+    depos.forEach(d => {
+      cuerpo += "■ Depósito " + d + " (" + porDepo[d].length + " pedido(s)):\n";
+      porDepo[d].slice(0, 80).forEach(r => {
+        cuerpo += "   • Pedido " + r.pedido + " | Tienda: " + (r.tienda || "—") + " | Fenicio: " + r.estadoFen + " | WMS: " + r.estadoWMS + " | " + (r.dias != null ? r.dias + " días háb." : "") + "\n";
       });
       cuerpo += "\n";
     });
@@ -3794,8 +3844,10 @@ function Operativa() {
   const depositosOpts = resultado ? Array.from(new Set(resultado.map(r => r.deposito).filter(d => d && d !== "-"))).sort() : [];
   const vistaBase = vistaTab === "criticos" ? criticos : vistaTab === "nodespacho" ? noDespacho : vistaTab === "estancados" ? estancados : vistaTab === "depo0" ? sinStockArr : vistaTab === "sinwms" ? sinWMS : vistaTab === "todos" ? (resultado || []) : atrasados;
   const buscarT = buscar.trim().toLowerCase();
+  const diaISO = f => { const d = parseFecha(f); return d ? d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0") : ""; };
   const vistaRows = vistaBase.filter(r =>
     (soloCC === "cc" ? r.clickCollect : soloCC === "pickup" ? r.pickup : soloCC === "domicilio" ? (!r.clickCollect && !r.pickup) : true) &&
+    (!filtroDia || diaISO(r.fecha) === filtroDia) &&
     (!filtroEstadoFen || r.estadoFen === filtroEstadoFen) &&
     (!filtroDeposito || r.deposito === filtroDeposito) &&
     (!filtroDiasMin || (r.dias != null && r.dias >= Number(filtroDiasMin))) &&
@@ -4065,7 +4117,24 @@ function Operativa() {
     }
   }, !rowsA.length || !rowsB.length ? "Carga los dos archivos primero" : "Cruzar archivos")))), resultado && /*#__PURE__*/React.createElement("div", {
     className: "space-y-3"
-  }, /*#__PURE__*/React.createElement("div", { className: "text-[11px] font-bold uppercase tracking-widest", style: { color: C.blue } }, "Acción rápida"),
+  }, calData.length > 0 && /*#__PURE__*/React.createElement("div", { className: "bg-white rounded-2xl border p-3", style: { borderColor: C.line } },
+    /*#__PURE__*/React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-2" },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("span", { className: "text-sm font-bold" }, "Filtrar por fecha"),
+        /*#__PURE__*/React.createElement("span", { className: "text-[11px] ml-2", style: { color: C.gray } }, "Tocá un día para ver sus pedidos · color = % entregado")),
+      /*#__PURE__*/React.createElement("div", { className: "flex items-center gap-2" },
+        filtroDia && /*#__PURE__*/React.createElement("button", { onClick: () => { setFiltroDia(""); setPage(0); }, className: "text-xs font-bold px-3 py-1.5 rounded-lg", style: { background: C.soft, color: C.blue } }, "✕ Ver todos los días"),
+        /*#__PURE__*/React.createElement("select", { value: calSelMes, onChange: e => setCalMes(e.target.value), className: "px-2 py-1.5 rounded-lg border text-xs font-bold bg-white", style: { borderColor: C.line, color: C.ink } }, mesesCal.map(m => /*#__PURE__*/React.createElement("option", { key: m, value: m }, fmtMesYM(m)))))),
+    /*#__PURE__*/React.createElement("div", { className: "flex flex-wrap gap-1.5" }, calDias.map(d => {
+      const col = d.pct >= 90 ? C.green : d.pct >= 70 ? C.amber : C.red;
+      const bg = d.pct >= 90 ? C.greenS : d.pct >= 70 ? C.amberS : C.redS;
+      const sel = filtroDia === d.dia;
+      return /*#__PURE__*/React.createElement("button", { key: d.dia, onClick: () => { setFiltroDia(sel ? "" : d.dia); setPage(0); }, title: d.dia + " — " + d.entregados + "/" + d.total + " entregados", className: "rounded-lg px-2 py-1 text-center transition-all", style: { background: sel ? col : bg, minWidth: 50, border: sel ? "2px solid " + col : "2px solid transparent" } },
+        /*#__PURE__*/React.createElement("div", { className: "text-[10px] font-bold", style: { color: sel ? "#fff" : C.gray } }, d.dia.slice(8, 10) + "/" + d.dia.slice(5, 7)),
+        /*#__PURE__*/React.createElement("div", { className: "text-sm font-black fraunces", style: { color: sel ? "#fff" : col } }, d.pct + "%"));
+    })),
+    filtroDia && /*#__PURE__*/React.createElement("div", { className: "text-[11px] mt-2 font-semibold", style: { color: C.blue } }, "Mostrando pedidos del " + filtroDia.slice(8, 10) + "/" + filtroDia.slice(5, 7) + "/" + filtroDia.slice(0, 4))),
+  /*#__PURE__*/React.createElement("div", { className: "text-[11px] font-bold uppercase tracking-widest", style: { color: C.blue } }, "Acción rápida"),
   /*#__PURE__*/React.createElement("div", { className: "grid grid-cols-2 lg:grid-cols-5 gap-2" },
     /*#__PURE__*/React.createElement(AccionCard, { label: "Atrasados +" + filtroDias + "d", value: atrasados.length, color: C.red, tab: "atrasados", sub: "Sin entregar a tiempo" }),
     /*#__PURE__*/React.createElement(AccionCard, { label: "Críticos +10d", value: criticos.length, color: "#B91C1C", tab: "criticos", sub: "Muy atrasados" }),
@@ -4107,17 +4176,7 @@ function Operativa() {
   totalPaginas > 1 && /*#__PURE__*/React.createElement("div", { className: "flex items-center justify-center gap-3 pt-1" },
     /*#__PURE__*/React.createElement("button", { onClick: () => setPage(p => Math.max(0, p - 1)), disabled: pageSafe <= 0, className: "text-xs font-bold px-3 py-1.5 rounded-lg disabled:opacity-40", style: { background: "#EEF1F5", color: C.gray } }, "← Anterior"),
     /*#__PURE__*/React.createElement("span", { className: "text-xs font-bold", style: { color: C.gray } }, "Hoja " + (pageSafe + 1) + " / " + totalPaginas),
-    /*#__PURE__*/React.createElement("button", { onClick: () => setPage(p => Math.min(totalPaginas - 1, p + 1)), disabled: pageSafe >= totalPaginas - 1, className: "text-xs font-bold px-3 py-1.5 rounded-lg disabled:opacity-40", style: { background: "#EEF1F5", color: C.gray } }, "Siguiente →")),
-  calData.length > 0 && /*#__PURE__*/React.createElement(Collapse, { title: "Cumplimiento de entrega por día", subtitle: "% entregado sobre el total de cada día de compra", defaultOpen: false },
-    /*#__PURE__*/React.createElement("div", { className: "flex justify-end mb-2" },
-      /*#__PURE__*/React.createElement("select", { value: calSelMes, onChange: e => setCalMes(e.target.value), className: "px-2 py-1.5 rounded-lg border text-xs font-bold bg-white", style: { borderColor: C.line, color: C.ink } }, mesesCal.map(m => /*#__PURE__*/React.createElement("option", { key: m, value: m }, fmtMesYM(m))))),
-    /*#__PURE__*/React.createElement("div", { className: "flex flex-wrap gap-1.5" }, calDias.map(d => {
-      const col = d.pct >= 90 ? C.green : d.pct >= 70 ? C.amber : C.red;
-      const bg = d.pct >= 90 ? C.greenS : d.pct >= 70 ? C.amberS : C.redS;
-      return /*#__PURE__*/React.createElement("div", { key: d.dia, title: d.dia + " — " + d.entregados + "/" + d.total + " entregados", className: "rounded-lg px-2 py-1 text-center", style: { background: bg, minWidth: 50 } },
-        /*#__PURE__*/React.createElement("div", { className: "text-[10px] font-bold", style: { color: C.gray } }, d.dia.slice(8, 10) + "/" + d.dia.slice(5, 7)),
-        /*#__PURE__*/React.createElement("div", { className: "text-sm font-black fraunces", style: { color: col } }, d.pct + "%"));
-    })))));
+    /*#__PURE__*/React.createElement("button", { onClick: () => setPage(p => Math.min(totalPaginas - 1, p + 1)), disabled: pageSafe >= totalPaginas - 1, className: "text-xs font-bold px-3 py-1.5 rounded-lg disabled:opacity-40", style: { background: "#EEF1F5", color: C.gray } }, "Siguiente →"))));
 }
 
 /* ── App root ── */
