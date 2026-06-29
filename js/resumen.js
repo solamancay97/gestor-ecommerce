@@ -29,6 +29,7 @@ function Resumen({
   const [metasM, setMetasM] = useState([]);
   const [seguiR, setSeguiR] = useState([]);
   const [pendSnap, setPendSnap] = useState(null); // pendientes del último cruce (analisis_snapshot)
+  const [operSnap, setOperSnap] = useState(null); // resumen de Operativa (operativa_snapshot) — fuente única
   useEffect(() => {
     let vivo = true;
     (async () => {
@@ -39,6 +40,7 @@ function Resumen({
         if (vivo) setSeguiR(all);
       } catch (_) {}
       try { const { data: snap } = await supa.from("analisis_snapshot").select("pendientes").eq("id", "ultimo").maybeSingle(); if (vivo && snap && snap.pendientes) setPendSnap(snap.pendientes); } catch (_) {}
+      try { const { data: os } = await supa.from("operativa_snapshot").select("*").eq("id", "ultimo").maybeSingle(); if (vivo && os) setOperSnap(os); } catch (_) {}
     })();
     return () => { vivo = false; };
   }, []);
@@ -58,19 +60,39 @@ function Resumen({
   const esEnt = r => /entregad/i.test(String(r.estado_fen || "") + " " + String(r.estado_wms || ""));
   const esCanc = r => /cancel/i.test(String(r.estado_fen || "") + " " + String(r.estado_wms || ""));
   const activosOp = seguiR.filter(r => !esEnt(r) && !esCanc(r));
-  const atrasadosN = activosOp.filter(r => Number(r.dias) > 3).length;
-  const depo0N = activosOp.filter(r => String(r.deposito || "").replace(/\.0+$/, "").trim() === "0").length;
+  // Cifras de Operativa: SIEMPRE preferimos el snapshot de Operativa (las mismas cifras que se ven
+  // en esa pestaña) para que Resumen y Operativa coincidan. Solo si no hay snapshot caemos al cálculo
+  // aproximado sobre la tabla de seguimiento.
+  const atrasadosCalc = activosOp.filter(r => Number(r.dias) > 3).length;
+  const depo0Calc = activosOp.filter(r => String(r.deposito || "").replace(/\.0+$/, "").trim() === "0").length;
+  const hayOper = !!(operSnap || seguiR.length);
+  const atrasadosN = operSnap ? (operSnap.atrasados || 0) : atrasadosCalc;
+  const depo0N = operSnap ? (operSnap.depo0 || 0) : depo0Calc;
   // ── KPIs automáticos: el valor sale de los datos reales (no se tipea a mano) ──
   const pendTotR = pendSnap && pendSnap.grupos ? (pendSnap.grupos.revisar.length + pendSnap.grupos.pendienteOK.length + ((pendSnap.grupos.pcnManual || []).length)) : null;
   const FUENTES = [
     { id: "atrasados_op", l: "Pedidos atrasados (+3 días háb.)", tipo: "num" },
-    { id: "depo0_op", l: "Pedidos en Depo 0 (sin entregar)", tipo: "num" },
+    { id: "criticos_op", l: "Pedidos críticos (+10 días háb.)", tipo: "num" },
+    { id: "validar_despacho_op", l: "Validar despacho (WMS sin entregar)", tipo: "num" },
+    { id: "estancados_op", l: "Pedidos estancados (+2 días sin avanzar)", tipo: "num" },
+    { id: "depo0_op", l: "Pedidos en Depo 0 (sin stock)", tipo: "num" },
+    { id: "sinwms_op", l: "Pedidos sin WMS", tipo: "num" },
+    { id: "tasa_cumpl_op", l: "Tasa de cumplimiento", tipo: "pct" },
+    { id: "leadtime_desp_op", l: "Tiempo a despacho (P90)", tipo: "dias" },
+    { id: "leadtime_ent_op", l: "Tiempo de entrega (P90)", tipo: "dias" },
     { id: "pendientes_factura", l: "Pendientes sin factura", tipo: "num" },
     { id: "facturacion_mes", l: "Facturación neta del mes", tipo: "money" }
   ];
   const valoresAuto = {
-    atrasados_op: seguiR.length ? atrasadosN : null,
-    depo0_op: seguiR.length ? depo0N : null,
+    atrasados_op: hayOper ? atrasadosN : null,
+    criticos_op: operSnap ? (operSnap.criticos || 0) : null,
+    validar_despacho_op: operSnap ? (operSnap.no_despacho || 0) : null,
+    estancados_op: operSnap ? (operSnap.estancados || 0) : null,
+    depo0_op: hayOper ? depo0N : null,
+    sinwms_op: operSnap ? (operSnap.sin_wms || 0) : null,
+    tasa_cumpl_op: operSnap ? operSnap.tasa_cumpl : null,
+    leadtime_desp_op: operSnap ? operSnap.leadtime_despacho : null,
+    leadtime_ent_op: operSnap ? operSnap.leadtime_entrega : null,
     pendientes_factura: pendTotR,
     facturacion_mes: metasM.length ? realMes : null
   };
@@ -79,7 +101,10 @@ function Resumen({
     const f = FUENTES.find(x => x.id === id);
     const v = valoresAuto[id];
     if (v == null) return "—";
-    return f && f.tipo === "money" ? fmtUSD(v) : Number(v).toLocaleString("es-UY");
+    if (f && f.tipo === "money") return fmtUSD(v);
+    if (f && f.tipo === "pct") return Number(v).toLocaleString("es-UY") + "%";
+    if (f && f.tipo === "dias") return Number(v).toLocaleString("es-UY") + " d";
+    return Number(v).toLocaleString("es-UY");
   };
   const haceCuanto = iso => {
     if (!iso) return "";
@@ -173,14 +198,14 @@ function Resumen({
     s: C.soft
   }, {
     l: "Pedidos atrasados",
-    v: seguiR.length ? String(atrasadosN) : "—",
+    v: hayOper ? String(atrasadosN) : "—",
     sub: "Operativa · +3 días háb.",
     ic: Ic.alert,
     c: atrasadosN > 0 ? C.red : C.green,
     s: C.redS
   }, {
     l: "Depo 0 (sin stock)",
-    v: seguiR.length ? String(depo0N) : "—",
+    v: hayOper ? String(depo0N) : "—",
     sub: "Sin entregar · acción manual",
     ic: Ic.alert,
     c: depo0N > 0 ? "#7C3AED" : C.green,

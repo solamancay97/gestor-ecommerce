@@ -357,12 +357,11 @@ function Operativa({ yo }) {
     // Conservar los pedidos YA SEGUIDOS (con comentario o marcados como accionado) que NO vinieron en
     // los archivos nuevos, para no perder su seguimiento al recruzar. Se re-derivan para refrescar días.
     const enCruce = new Set(merged.map(r => r.pedido));
-    setResultado(prevRes => {
-      const retenidos = (prevRes || [])
-        .filter(p => !enCruce.has(p.pedido) && ((p.historial && p.historial.length) || p.accionado))
-        .map(p => ({ ...calcDeriv(p), retenido: true }));
-      return merged.concat(retenidos).sort((a, b) => (b.dias || 0) - (a.dias || 0));
-    });
+    const retenidos = (resultado || [])
+      .filter(p => !enCruce.has(p.pedido) && ((p.historial && p.historial.length) || p.accionado))
+      .map(p => ({ ...calcDeriv(p), retenido: true }));
+    const finalRows = merged.concat(retenidos).sort((a, b) => (b.dias || 0) - (a.dias || 0));
+    setResultado(finalRows);
     setVistaTab("atrasados");
     setPage(0);
     // Persistir SOLO los pedidos accionables (snapshot); no pisa comentario/accionado existentes
@@ -381,23 +380,27 @@ function Operativa({ yo }) {
         }
       } catch (_) {}
     })();
-    // Actualizar KPIs globales automáticamente
-    const atrasadosCount = res.filter(r => r.atrasado).length;
-    const depo0Count = wmsF.filter(r => r[colEstEnc] === "Items Pedidos").length;
+    // Guardar el RESUMEN de Operativa (las MISMAS cifras que se ven en esta pestaña) para que el
+    // Resumen y los KPIs automáticos muestren exactamente lo mismo, sin recalcular distinto.
     (async () => {
       try {
-        const {
-          data: kpisG
-        } = await supa.from("kpis_globales").select("id,nombre");
-        for (const k of kpisG || []) {
-          const n = k.nombre.toLowerCase();
-          if (n.includes("atrasad")) await supa.from("kpis_globales").update({
-            valor: String(atrasadosCount)
-          }).eq("id", k.id);
-          if (n.includes("depo") || n.includes("stock")) await supa.from("kpis_globales").update({
-            valor: String(depo0Count)
-          }).eq("id", k.id);
-        }
+        const lt = finalRows.filter(r => r.leadtime != null).map(r => r.leadtime);
+        const ltE = finalRows.filter(r => r.leadtimeEntrega != null).map(r => r.leadtimeEntrega);
+        await supa.from("operativa_snapshot").upsert({
+          id: "ultimo",
+          total: finalRows.length,
+          atrasados: finalRows.filter(r => r.atrasado).length,
+          criticos: finalRows.filter(r => r.critico).length,
+          no_despacho: finalRows.filter(r => r.posibleNoDespacho).length,
+          estancados: finalRows.filter(r => r.estancado).length,
+          depo0: finalRows.filter(r => r.sinStock).length,
+          sin_wms: finalRows.filter(r => r.sinWMS).length,
+          entregados: finalRows.filter(r => r.entregado).length,
+          tasa_cumpl: finalRows.length ? Math.round(finalRows.filter(r => r.entregado).length / finalRows.length * 100) : 0,
+          leadtime_despacho: percentil(lt, PCTL),
+          leadtime_entrega: percentil(ltE, PCTL),
+          actualizado: new Date().toISOString()
+        }, { onConflict: "id" });
       } catch (_) {}
     })();
   };
